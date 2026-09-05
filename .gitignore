@@ -1,0 +1,27 @@
+# 构建输出
+build/
+*.o
+*.obj
+*.a
+*.so
+*.d
+*.exe
+*.dll
+
+# Qt Creator
+.qtcreator/
+*.pro.user
+*.pro.user.*
+
+# IDE / 编辑器
+.vscode/
+.idea/
+.vs/
+
+# 本工具数据
+.zcode/
+
+# 临时文件
+*.tmp
+*.log
+*.ini
