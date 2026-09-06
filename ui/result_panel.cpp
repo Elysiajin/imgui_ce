@@ -58,6 +58,18 @@ void result_panel::render() {
     const int row_total = (int)shown;
     if (selected_row >= row_total) selected_row = row_total - 1;
 
+    // 双击结果行 / 右键菜单 共用的"加入地址列表"动作
+    auto add_address_to_list = [&](uint64_t addr) {
+        address_record rec;
+        rec.real_address = addr;
+        char addr_buf[32];
+        snprintf(addr_buf, sizeof(addr_buf), "%016llX", (unsigned long long)addr);
+        rec.address = addr_buf;
+        rec.description = "result";
+        rec.valid = true;
+        ctx_.address_list.add_record(rec);
+    };
+
     float avail = ImGui::GetContentRegionAvail().y;
     if (ImGui::BeginChild("result_table", ImVec2(0, avail - 40), ImGuiChildFlags_Borders)) {
         if (ImGui::BeginTable("##result", 3,
@@ -91,7 +103,9 @@ void result_panel::render() {
                         selected_row = row;
                     }
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        // TODO: goto_address(r.address)
+                        // 双击：把该行地址加入下方地址列表
+                        selected_row = row;
+                        add_address_to_list(r.address);
                     }
                     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                         selected_row = row;
@@ -140,15 +154,7 @@ void result_panel::render() {
     if (ImGui::BeginPopup("##result_row_menu")) {
         if (selected_row >= 0 && selected_row < row_total) {
             if (ImGui::MenuItem("Add to address list")) {
-                address_record rec;
-                rec.real_address = repo->get_address_at_index((size_t)selected_row);
-                char addr[32];
-                snprintf(addr, sizeof(addr), "%016llX",
-                         (unsigned long long)rec.real_address);
-                rec.address = addr;
-                rec.description = "result";
-                rec.valid = true;
-                ctx_.address_list.add_record(rec);
+                add_address_to_list(repo->get_address_at_index((size_t)selected_row));
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Copy address")) {

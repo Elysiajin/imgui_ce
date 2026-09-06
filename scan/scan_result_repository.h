@@ -1,6 +1,8 @@
 ﻿#pragma once
 #include "type/scan_data_stream_define.h"
 #include "scan/adaptive_cache.h"
+#include "scan/scan_result_store.h"
+#include <algorithm>
 #include <vector>
 #include <atomic>
 #include <mutex>
@@ -17,8 +19,10 @@ struct scan_metadata {
     bool is_completed = false;
 };
 
+// 上一轮扫描结果：压缩驻留（PE 重定位式存储，替代原 vector）。
+// 1M 条结果原始 10MB，压缩后约 2~6MB，且随机读取不再走磁盘文件流。
 struct previous_scan_snapshot {
-    std::vector<scan_result> results;
+    scan_result_store store;
 };
 
 constexpr size_t POOL_MEMORY_THRESHOLD = 500'000;
@@ -49,8 +53,15 @@ public:
     void clear_previous_results();
 
 private:
-    std::vector<scan_result> m_result_data;
-    std::shared_ptr<adaptive_cache_pool<scan_result>> m_result_pool;
+    // 入库前统一按地址升序排序（压缩块编码依赖升序，结果区展示也保持一致）
+    static void sort_by_address(std::vector<scan_result>& results) {
+        std::sort(results.begin(), results.end(),
+                  [](const scan_result& a, const scan_result& b) { return a.address < b.address; });
+    }
+    static scan_result_store pack_from_vector(const std::vector<scan_result>& results);
+
+    std::vector<scan_result> m_result_data;                  // 小结果集（<= 阈值），O(1) 随机读
+    std::shared_ptr<scan_result_store> m_result_store;       // 大结果集（> 阈值），压缩驻留
 
     mutable std::mutex m_mutex;
     std::atomic<int> m_generation{ 0 };

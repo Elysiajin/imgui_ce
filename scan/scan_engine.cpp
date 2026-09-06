@@ -1,6 +1,7 @@
 #include "scan\scan_engine.h"
 #include "core\process_manager.h"
 #include "scan\thread_pool.h"
+#include "scan\scan_value_target.h"
 #include <cstring>
 
 // =============================================================================
@@ -850,45 +851,9 @@ void scan_engine::task_first_scan(const scan_request& request, memory_region reg
 	std::vector<scan_result> batch_results;
 	batch_results.reserve(2048);
 
+	// 目标值构造（位还原/近似区间逻辑在 scan_value_target.h，便于单测覆盖）
 	T v1 = 0, v2 = 0;
-		const bool is_float_approx = std::is_floating_point_v<T>
-		&& request.contain_approximate_value
-		&& request.first_type == scan_type::exact_value;
-
-	if (auto* p = std::get_if<value_params>(&request.params)) {
-		if constexpr (std::is_floating_point_v<T>) {
-			T target;
-			std::memcpy(&target, &p->value1, sizeof(T));
-			if (is_float_approx) {
-				// ★ 勾选了"包含近似值" → 使用 ±5% 相对容差
-				//   对于目标值 1000，范围 [950, 1050]；对于目标值 0.5，范围 [0.475, 0.525]
-				//   相比于固定 ±0.5，百分比容差对大值和小值都更合理
-				constexpr T relative_epsilon = static_cast<T>(0.01); // ±1%
-				T lo = target * (static_cast<T>(1.0) - relative_epsilon);
-				T hi = target * (static_cast<T>(1.0) + relative_epsilon);
-				// 处理目标值为 0 或负数的边界情况，保证至少有一个最小绝对容差
-				T abs_min = static_cast<T>(0.0001);
-				if (target >= static_cast<T>(0)) {
-					if (lo < -abs_min) lo = static_cast<T>(0);        // 下限不跌破 0（对于正数场景更自然）
-				}
-				if (hi - lo < abs_min) { lo = target - abs_min; hi = target + abs_min; }
-				std::memcpy(&v1, &lo, sizeof(T));
-				std::memcpy(&v2, &hi, sizeof(T));
-			} else {
-				// 未勾选近似值 / greater_than/less_than/Between → 取精确位值
-				std::memcpy(&v1, &target, sizeof(T));
-				if (request.first_type == scan_type::between) {
-					T tmp;
-					std::memcpy(&tmp, &p->value2, sizeof(T));
-					std::memcpy(&v2, &tmp, sizeof(T));
-				}
-			}
-		} else {
-			std::memcpy(&v1, &p->value1, sizeof(T));
-			if (request.first_type == scan_type::between)
-				std::memcpy(&v2, &p->value2, sizeof(T));
-		}
-	}
+	const bool is_float_approx = build_first_scan_targets<T>(request, v1, v2);
 
 	// 填充 target_buf（浮点数含近似值 exact_value 走标量区间，不需要 SIMD 目标块）
 	const bool need_target_buf = !is_float_approx

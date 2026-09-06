@@ -67,6 +67,9 @@ HEADERS += \
     scan/scan_simd_accelerate.h \
     scan/temp_path_manager.h \
     scan/encoding_formatter.h \
+    scan/scan_value_parser.h \
+    scan/scan_value_target.h \
+    scan/scan_result_store.h \
     type/scan_data_stream_define.h \
     type/memory_region.h \
     type/module_info.h \

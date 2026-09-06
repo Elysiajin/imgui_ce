@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "core/process_manager.h"
 #include "scan/scan_service.h"
+#include "scan/scan_value_parser.h"
 
 #include <algorithm>
 #include <cctype>
@@ -63,27 +64,7 @@ static bool parse_value_params(const ui_state& state, scan_request& req, std::st
                                                          : (req.next_type == next_scan_type::between);
 
     auto parse_one = [&](const std::string& text, uint64_t& out) -> bool {
-        if (is_floating_point(dt)) {
-            char* end = nullptr;
-            double d = strtod(text.c_str(), &end);
-            if (end == text.c_str()) return false;
-            if (dt == scan_data_type::float32) {
-                float f = static_cast<float>(d);
-                std::memcpy(&out, &f, sizeof(f));
-            } else {
-                std::memcpy(&out, &d, sizeof(d));
-            }
-            return true;
-        }
-        char* end = nullptr;
-        if (state.hex) {
-            out = strtoull(text.c_str(), &end, 16);
-            return end != text.c_str();
-        }
-        long long sv = strtoll(text.c_str(), &end, 10);
-        if (end == text.c_str()) return false;
-        out = static_cast<uint64_t>(sv);
-        return true;
+        return parse_scan_value(text, dt, state.hex, out);
     };
 
     if (!parse_one(t1, vp.value1)) {
