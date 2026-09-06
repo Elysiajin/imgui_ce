@@ -34,11 +34,16 @@ public:
     // 供外部（结果区/手动添加）填充数据
     void add_record(const address_record& rec);
     void clear();
+
+    // 实时刷新所有行内存值 + 高亮（约 200ms 节流）
+    void update_values();
     std::vector<address_record>& records() { return records_; }
 
 private:
     address_record* find_record(uint64_t id);
     void remove_record(uint64_t id);
+    bool begin_edit(uint64_t id, std::string initial);
+    void commit_edit(address_record* rec);
 
     std::vector<address_record> records_;
     uint64_t next_id_ = 1;   // 自增 id
@@ -47,4 +52,5 @@ private:
     uint64_t selected_row_id_ = 0;      // 当前被右键/选中的行
     uint64_t edit_id_ = 0;              // 正在编辑的行（0 表示无）
     std::string edit_buf_;              // 编辑缓冲
+    int edit_col_ = 1;                  // 正在编辑的列：1=描述, 4=值
 };

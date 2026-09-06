@@ -1,6 +1,7 @@
 ﻿#include "result_panel.h"
 #include "app_context.h"
 #include "ui/address_list_panel.h"
+#include "ui/address_value.h"
 #include "imgui.h"
 #include "scan/scan_service.h"
 #include "scan/scan_data_provider.h"
@@ -59,6 +60,8 @@ void result_panel::render() {
     if (selected_row >= row_total) selected_row = row_total - 1;
 
     // 双击结果行 / 右键菜单 共用的"加入地址列表"动作
+    // 携带当前扫描类型（float/double → 8 字节等），否则地址栏类型固定为 4 字节。
+    const scan_data_type scan_dt = dtype;
     auto add_address_to_list = [&](uint64_t addr) {
         address_record rec;
         rec.real_address = addr;
@@ -67,6 +70,10 @@ void result_panel::render() {
         rec.address = addr_buf;
         rec.description = "result";
         rec.valid = true;
+        rec.type = scan_data_type_to_value_type(scan_dt);   // ← 关键：用扫描类型
+        // 基准值 = 扫描类型对应的当前值（previous_value 作为改动基准）
+        rec.previous_value = read_address_value(addr, rec.type);
+        rec.value = rec.previous_value;
         ctx_.address_list.add_record(rec);
     };
 

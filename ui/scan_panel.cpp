@@ -329,7 +329,4 @@ void scan_panel::render() {
         if (first_list)
             ImGui::Checkbox("Not match",      &state_.not_match);
     }
-
-    if (scanning)
-        ImGui::ProgressBar(svc.progress(), ImVec2(-1, -1), "Scanning...");
 }

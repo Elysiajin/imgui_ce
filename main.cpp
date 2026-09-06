@@ -155,6 +155,13 @@ int main()
                 settings.render();
             }
             const float bottom_h = 200.0f;
+            // 扫描进度条移到 scan/result 子窗口之上（不再塞在左侧面板内）
+            {
+                auto& svc = scan_service::instance();
+                if (svc.is_scanning()) {
+                    ImGui::ProgressBar(svc.progress(), ImVec2(-1, 0), "Scanning...");
+                }
+            }
             float top_h = ImGui::GetContentRegionAvail().y - bottom_h - ImGui::GetStyle().ItemSpacing.y;
             if (top_h < ImGui::GetFrameHeight()) top_h = ImGui::GetFrameHeight();
 

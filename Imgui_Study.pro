@@ -84,4 +84,5 @@ HEADERS += \
     ui/scan_panel.h \
     ui/result_panel.h \
     ui/app_context.h \
-    ui/settings_window.h
+    ui/settings_window.h \
+    ui/address_value.h
