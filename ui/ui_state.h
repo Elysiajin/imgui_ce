@@ -12,6 +12,11 @@ struct ui_state {
     bool show_about_window = false;
     bool show_debug_window = false;
 
+    // 设置页面
+    bool        show_settings_window = false;
+    int         theme     = 0;                    // 0 = Dark, 1 = Light
+    std::string cache_dir;                        // 缓存目录（空 = 默认，用 %TEMP%/MyScanApp_Data/<pid>）
+
     scan_data_type data_type_ = scan_data_type::int32;   // 数值/字符串/字节数组/All/结构体
     char         scan_value[0x400] = "100";          // 搜索值输入框缓冲
     char         scan_value2[0x400] = "";            // Between 第二个输入框

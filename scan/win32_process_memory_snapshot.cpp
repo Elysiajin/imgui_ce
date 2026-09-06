@@ -1,6 +1,7 @@
 #include "scan/win32_process_memory_snapshot.h"
 #include <cstring>
 #include <fstream>
+#include <filesystem>
 
 win32_process_memory_snapshot::win32_process_memory_snapshot(const std::string& path, std::map<uint64_t, size_t> index)
     : m_path(path), m_index(std::move(index)) {
@@ -10,7 +11,14 @@ win32_process_memory_snapshot::win32_process_memory_snapshot(const std::string& 
 win32_process_memory_snapshot::~win32_process_memory_snapshot() {
     if (m_p_buffer) UnmapViewOfFile(m_p_buffer);
     if (m_h_mapping) CloseHandle(m_h_mapping);
-    if (m_h_file != (HANDLE)(LONG_PTR)-1) CloseHandle(m_h_file);
+    if (m_h_file != INVALID_HANDLE_VALUE) CloseHandle(m_h_file);
+
+    // RAII 删除自身 .bin 快照文件。
+    // 每次扫描都会新建 snapshot_<tick>.bin；set_previous_snapshot 只是换掉
+    // shared_ptr，旧文件的 .bin 若没人删会无限累积占用磁盘。这里在最后一个
+    // 引用被释放时删除（m_first / m_prev 持有时不删，正好只保留两个快照）。
+    std::error_code ec;
+    std::filesystem::remove(m_path, ec);
 }
 
 void win32_process_memory_snapshot::init_mapping() {

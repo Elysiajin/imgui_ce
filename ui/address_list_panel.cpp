@@ -34,7 +34,7 @@ void address_list_panel::render() {
     if (ImGui::BeginChild("addr_list", ImVec2(0, avail), ImGuiChildFlags_Borders)) {
         if (ImGui::BeginTable("##addr_table", 5,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY |
-                              ImGuiTableFlags_RowBg)) {
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
             ImGui::TableSetupColumn("Active");
             ImGui::TableSetupColumn("Description");
             ImGui::TableSetupColumn("Address");
@@ -52,14 +52,12 @@ void address_list_panel::render() {
 
                 ImGui::TableSetColumnIndex(1);
                 if (edit_id_ == r.id) {
-                    // 正在编辑：用一个窄输入框
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
                     if (ImGui::InputText("##desc_edit", edit_buf_.data(), edit_buf_.size() + 1,
                                          ImGuiInputTextFlags_EnterReturnsTrue)) {
                         r.description = edit_buf_;
                         edit_id_ = 0;
                     }
-                    // Esc 取消
                     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) edit_id_ = 0;
                 } else {
                     if (ImGui::Selectable(r.description.c_str())) {

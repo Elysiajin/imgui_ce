@@ -36,6 +36,7 @@ SOURCES += \
     ui/process_list_window.cpp \
     ui/scan_panel.cpp \
     ui/result_panel.cpp \
+    ui/settings_window.cpp \
     ui/top_menu.cpp
 
 LIBS += -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -ldwmapi
@@ -79,4 +80,5 @@ HEADERS += \
     ui/ui_state.h \
     ui/scan_panel.h \
     ui/result_panel.h \
-    ui/app_context.h
+    ui/app_context.h \
+    ui/settings_window.h

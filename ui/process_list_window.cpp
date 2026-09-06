@@ -3,21 +3,36 @@
 #include "core/process_manager.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 
 void process_list_window::render() {
     auto& pm = process_manager::instance();
 
-    // 首次显示时：通过 process_manager 枚举进程，并按 pid 升序排列
-    if (process_list_.empty()) {
+    // 节流刷新：窗口显示时枚举一次，之后距上次超过 ~1000ms 自动重枚举。
+    // 退出/新开的进程在下一轮枚举自然反映（exit 进程不再被枚举到）。
+    const auto now = std::chrono::steady_clock::now();
+    const auto refresh_threshold = std::chrono::milliseconds(1000);
+    if (now - last_refresh_ >= refresh_threshold) {
         process_list_ = pm.processes().enumerate();
         std::sort(process_list_.begin(), process_list_.end(),
                   [](const process_info& a, const process_info& b) {
                       return a.pid < b.pid;
                   });
+        last_refresh_ = now;
     }
 
     if (ImGui::Begin("Process Window", &state_.show_process_window, ImGuiWindowFlags_NoCollapse)) {
+        // 手动刷新按钮
+        if (ImGui::Button("Refresh")) {
+            process_list_ = pm.processes().enumerate();
+            std::sort(process_list_.begin(), process_list_.end(),
+                      [](const process_info& a, const process_info& b) {
+                          return a.pid < b.pid;
+                      });
+            last_refresh_ = std::chrono::steady_clock::now();
+        }
+        ImGui::Separator();
 
         if (ImGui::BeginTable("Process Tab", 4,
             ImGuiTableFlags_ScrollY | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {

@@ -7,21 +7,24 @@
 void top_menu::render() {
     if(ImGui::BeginMenuBar()){
         if(ImGui::BeginMenu("File")){
-            if(ImGui::MenuItem("Exit", "Alt+F4")) ExitProcess(0);
             if(ImGui::MenuItem("Opnen Process", "O")){
                 state_.show_process_window = true;
             }
+
+            if(ImGui::MenuItem("Exit", "Alt+F4")) ExitProcess(0);
 
             ImGui::EndMenu();
         }
 
         if(ImGui::BeginMenu("Edit")){
-            // if(ImGui::MenuItem("Settings"))
+            if(ImGui::MenuItem("Settings")){
+                state_.show_settings_window = true;
+            }
             ImGui::EndMenu();
         }
 
         if(ImGui::BeginMenu("About")){
-            if(ImGui::MenuItem("About CheatEngine")){
+            if(ImGui::MenuItem("About This APP")){
                 state_.show_about_window = true;
             }
             if(ImGui::MenuItem("Debug Panel")){
@@ -31,7 +34,6 @@ void top_menu::render() {
             ImGui::EndMenu();
         }
 
-        // if(ImGui::MenuItem("test")) MessageBoxW(nullptr, L"Test", L"Captain", MB_OK);
 
         ImGui::EndMenuBar();
     }

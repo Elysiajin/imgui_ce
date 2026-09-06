@@ -8,6 +8,7 @@
 #include "ui/process_list_window.h"
 #include "ui/process_detail_window.h"
 #include "ui/debug_panel.h"
+#include "ui/settings_window.h"
 #include "ui/app_context.h"
 #include "ui/address_list_panel.h"
 #include "core/event/signal.h"
@@ -81,6 +82,7 @@ int main()
     process_detail_window process_detail(g_ui_state);
     debug_panel dpanel;
     auto& app_ctx = application_context::instance();
+    settings_window settings(g_ui_state);
     scan_panel scan_panel(g_ui_state, app_ctx);
     result_panel result_panel(app_ctx);
     top_menu main_menu(g_ui_state);
@@ -109,6 +111,21 @@ int main()
         // 主线程事件队列：执行后台线程 post_to_main 的任务（如 scan_finished）。
         zc::drain_main_queue();
 
+        // 附加的进程退出后自动脱离：清空扫描结果/地址区，回到未附加状态。
+        {
+            auto& pm = process_manager::instance();
+            if (pm.is_attached() && !pm.is_process_alive()) {
+                auto& svc = scan_service::instance();
+                if (svc.is_scanning()) svc.cancel();
+                svc.clear();
+                app_ctx.address_list.clear();
+                g_ui_state.first_scan_done = false;
+                g_ui_state.scan_mode = scan_mode::first;
+                g_ui_state.modules_loaded = false;
+                pm.detach();
+            }
+        }
+
         ImGui::SetNextWindowSize(ImVec2(900, 620), ImGuiCond_FirstUseEver);
         static bool is_open = true;
 
@@ -131,6 +148,11 @@ int main()
             // Debug panel (system monitor) — opened from About menu
             if (g_ui_state.show_debug_window) {
                 dpanel.render(g_ui_state.show_debug_window);
+            }
+
+            // Settings window — Edit menu
+            if (g_ui_state.show_settings_window) {
+                settings.render();
             }
             const float bottom_h = 200.0f;
             float top_h = ImGui::GetContentRegionAvail().y - bottom_h - ImGui::GetStyle().ItemSpacing.y;

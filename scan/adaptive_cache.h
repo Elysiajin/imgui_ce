@@ -13,7 +13,10 @@
 #include <vector>
 
 
-#define THEAD_LOCAL_SIZE 50LL * 1024 * 1024 // 50MB
+// 每个扫描线程在溢写到磁盘前，允许驻留内存的字节预算（而非元素个数）。
+// 之前误当作元素个数使用：scan_result 为 10 字节，52.4M 元素 ≈ 524 MB/线程，
+// 线程池一开内存瞬间飙高。改为真正的字节预算，内存封顶并把数据提前溢写到磁盘。
+#define THEAD_LOCAL_SIZE 16LL * 1024 * 1024 // 16MB/线程
 
 /// @brief 泛型自适应缓存容器（子缓存单元）
 template <typename T> class adaptive_cache {
@@ -22,10 +25,12 @@ template <typename T> class adaptive_cache {
 
 public:
   // 【修改】构造函数增加唯一标识，防止多线程创建文件冲突
-  explicit adaptive_cache(size_t mem_threshold = 100'000,
-                         std::string id = "default")
-      : m_count(0), m_threshold(mem_threshold), m_on_disk(false), m_unique_id(id) {
-    m_buffer.reserve(std::min(mem_threshold, (size_t)10240));
+  // mem_threshold 现在是字节预算；内部换算成元素个数上限 element_cap。
+  explicit adaptive_cache(size_t byte_budget = THEAD_LOCAL_SIZE,
+                          std::string id = "default")
+      : m_count(0), m_threshold(byte_budget), m_on_disk(false), m_unique_id(id) {
+    m_element_cap = std::max<size_t>(1, byte_budget / sizeof(T));
+    m_buffer.reserve(std::min(m_element_cap, (size_t)10240));
   }
 
   ~adaptive_cache() { clear(); }
@@ -47,7 +52,7 @@ public:
     std::lock_guard<std::mutex> lock(m_mtx);
     if (!m_on_disk) {
       m_buffer.push_back(item);
-      if (m_buffer.size() >= m_threshold)
+      if (m_buffer.size() >= m_element_cap)
         flush_to_disk();
     } else {
       ensure_file_open();
@@ -62,7 +67,7 @@ public:
     std::lock_guard<std::mutex> lock(m_mtx);
 
     // 只有当前已经在磁盘，或者 内存+新数据 超过阈值时，才写磁盘
-    if (m_on_disk || (m_buffer.size() + items.size() >= m_threshold)) {
+    if (m_on_disk || (m_buffer.size() + items.size() >= m_element_cap)) {
       if (!m_on_disk)
         flush_to_disk(); // 第一次超过阈值，把内存里的全倒进去
 
@@ -134,6 +139,7 @@ private:
     m_disk_out = std::move(other.m_disk_out);
     m_count = other.m_count;
     m_threshold = other.m_threshold;
+    m_element_cap = other.m_element_cap;
     m_on_disk = other.m_on_disk;
     m_unique_id = std::move(other.m_unique_id);
     other.m_count = 0;
@@ -173,7 +179,8 @@ private:
   std::string m_disk_path;
   std::ofstream m_disk_out;
   size_t m_count;
-  size_t m_threshold;
+  size_t m_threshold;    // 字节预算（保留字段，便于调试）
+  size_t m_element_cap;  // 换算后的元素个数上限
   bool m_on_disk;
   std::string m_unique_id; // 【新增】实例唯一 ID
 };
