@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include <string>
@@ -6,7 +6,6 @@
 
 #include "type/value_type.h"
 
-// 一条地址记录（对应 CE 的 TMemoryRecord）
 // 用 id 作为跨帧稳定标识，避免依赖数组下标
 struct address_record {
     uint64_t     id = 0;                    // 稳定行键
@@ -42,15 +41,15 @@ public:
 private:
     address_record* find_record(uint64_t id);
     void remove_record(uint64_t id);
-    bool begin_edit(uint64_t id, std::string initial);
+    void begin_edit(uint64_t id, std::string initial);
     void commit_edit(address_record* rec);
 
     std::vector<address_record> records_;
     uint64_t next_id_ = 1;   // 自增 id
 
-    // 右键/编辑状态
-    uint64_t selected_row_id_ = 0;      // 当前被右键/选中的行
+    // 右键/编辑状态（edit_col_：1=描述, 3=类型, 4=值）
+    uint64_t selected_row_id_ = 0;
     uint64_t edit_id_ = 0;              // 正在编辑的行（0 表示无）
-    std::string edit_buf_;              // 编辑缓冲
-    int edit_col_ = 1;                  // 正在编辑的列：1=描述, 4=值
+    int      edit_col_ = 1;
+    char     edit_buf_[256] = {};       // 固定大小编辑缓冲，避免空字段无法输入
 };
