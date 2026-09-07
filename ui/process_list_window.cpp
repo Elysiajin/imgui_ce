@@ -1,5 +1,6 @@
 ﻿#include "process_list_window.h"
 #include "imgui.h"
+#include "ui/process_icon_cache.h"
 #include "core/process_manager.h"
 
 #include <algorithm>
@@ -10,7 +11,6 @@ void process_list_window::render() {
     auto& pm = process_manager::instance();
 
     // 节流刷新：窗口显示时枚举一次，之后距上次超过 ~1000ms 自动重枚举。
-    // 退出/新开的进程在下一轮枚举自然反映（exit 进程不再被枚举到）。
     const auto now = std::chrono::steady_clock::now();
     const auto refresh_threshold = std::chrono::milliseconds(1000);
     if (now - last_refresh_ >= refresh_threshold) {
@@ -43,6 +43,8 @@ void process_list_window::render() {
             ImGui::TableSetupColumn("Threads", ImGuiTableColumnFlags_WidthFixed, 80.f);
 
             ImGui::TableHeadersRow();
+
+            auto& icon_cache = process_icon_cache::instance();
 
             for (const auto& p : process_list_) {
                 ImGui::PushID(static_cast<int>(p.pid));
@@ -87,6 +89,11 @@ void process_list_window::render() {
                 }
 
                 ImGui::TableSetColumnIndex(1);
+                ImTextureID icon = icon_cache.icon_for(p);
+                if (icon) {
+                    ImGui::Image((ImTextureRef)icon, ImVec2(16, 16));
+                    ImGui::SameLine();
+                }
                 ImGui::TextUnformatted(p.name.c_str());
 
                 ImGui::TableSetColumnIndex(2);

@@ -28,6 +28,7 @@ bool process_manager::attach(uint32_t pid)
         snapshot_manager_ = std::make_shared<process_memory_snapshot_manager>();
 
     attached_pid_ = pid;
+    modules();          // 确保惰性枚举器已创建，否则 update_modules 会把模块缓存清空
     update_modules();
     return true;
 }

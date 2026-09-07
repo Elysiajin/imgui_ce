@@ -154,7 +154,13 @@ void result_panel::render() {
     }
     ImGui::EndChild();
 
-    if (ImGui::Button("View Memory")) {}
+    if (ImGui::Button("View Memory")) {
+        // 扫描结果本质是数据地址：跳到内存浏览器的十六进制 dump 视图。
+        uint64_t addr = 0;
+        if (selected_row >= 0 && selected_row < row_total)
+            addr = repo->get_address_at_index((size_t)selected_row);
+        ctx_.open_memory_viewer.emit(memory_viewer_mode::hexdump, addr);
+    }
     ImGui::SameLine();
     if (ImGui::Button("Manual Add Address")) {}
 

@@ -7,6 +7,14 @@
 void top_menu::render() {
     if(ImGui::BeginMenuBar()){
         if(ImGui::BeginMenu("File")){
+            if(ImGui::MenuItem("Save")){
+
+            }
+
+            if(ImGui::MenuItem("Load")){
+
+            }
+
             if(ImGui::MenuItem("Opnen Process", "O")){
                 state_.show_process_window = true;
             }

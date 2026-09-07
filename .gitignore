@@ -25,3 +25,4 @@ build/
 *.tmp
 *.log
 *.ini
+tmp_snap_test.bin

@@ -8,9 +8,18 @@
 #include "type/scan_data_stream_define.h"   // scan_data_type / scan_type / next_scan_type
 #include "type/module_info.h"
 
+// 内存浏览器当前激活的视图（上侧反汇编 / 下侧十六进制 dump）。
+// 与 x64dbg 的 CPU 窗口一致：顶部反汇编 + 底部十六进制 TAB。
+enum class memory_viewer_mode {
+    disassembly = 0,
+    hexdump     = 1,
+};
+
 struct ui_state {
-    bool show_about_window = false;
-    bool show_debug_window = false;
+    bool show_about_window  = false;
+    bool show_debug_window  = false;
+    bool show_memory_window = false;
+    bool show_assembler_window = false;
 
     // 设置页面
     bool        show_settings_window = false;
@@ -44,6 +53,11 @@ struct ui_state {
 
     // 显示进程详情窗口（模块 / 内存区域 TAB 页）
     bool       show_process_detail = false;
+
+    // 内存浏览器：激活视图 + 两个视图各自的跳转地址（x64dbg 风格：上反汇编 / 下 dump）。
+    memory_viewer_mode memory_view_mode = memory_viewer_mode::hexdump;
+    uint64_t           disasm_view_address = 0;
+    uint64_t           dump_view_address   = 0;
 
     // ===== 附加进程后的模块下拉缓存（跨帧保留，避免每帧重新枚举）=====
     uint32_t                attached_pid   = 0;

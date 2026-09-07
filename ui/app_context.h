@@ -2,6 +2,7 @@
 
 #include "ui/address_list_panel.h"
 #include "core/event/signal.h"
+#include "ui/ui_state.h"
 
 #include <memory>
 
@@ -37,6 +38,10 @@ public:
     // 订阅方在主循环 drain() 时收到，安全更新 UI。
     zc::signal<> scan_started;
     zc::signal<> scan_finished;
+
+    // 请求打开内存浏览器并跳转到指定视图/地址。
+    // 由 main.cpp 订阅，统一改 ui_state（面板不直接访问 ui_state）。
+    zc::signal<memory_viewer_mode, uint64_t> open_memory_viewer;
 
 private:
     application_context() = default;

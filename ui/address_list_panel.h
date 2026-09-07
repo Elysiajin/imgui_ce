@@ -36,6 +36,8 @@ public:
 
     // 实时刷新所有行内存值 + 高亮（约 200ms 节流）
     void update_values();
+    // 每帧把 frozen 行的基准值持续写回内存（数据冻结）
+    void apply_freeze();
     std::vector<address_record>& records() { return records_; }
 
 private:
@@ -47,8 +49,9 @@ private:
     std::vector<address_record> records_;
     uint64_t next_id_ = 1;   // 自增 id
 
-    // 右键/编辑状态（edit_col_：1=描述, 3=类型, 4=值）
-    uint64_t selected_row_id_ = 0;
+    // 编辑状态（edit_col_：1=描述, 3=类型, 4=值）
+    uint64_t selected_row_id_ = 0;      // 最近被右键选中的行
+    uint64_t pending_delete_id_ = 0;    // 待删除行（延迟到行循环之外执行，避免迭代中失效）
     uint64_t edit_id_ = 0;              // 正在编辑的行（0 表示无）
     int      edit_col_ = 1;
     char     edit_buf_[256] = {};       // 固定大小编辑缓冲，避免空字段无法输入

@@ -5,10 +5,12 @@ CONFIG -= qt
 
 DEFINES += UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
 DEFINES += __AVX2__
+DEFINES += ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD
 
 QMAKE_CXXFLAGS += -mavx2 -mbmi2
 
 INCLUDEPATH += $$PWD $$PWD/libs $$PWD/libs/Imgui $$PWD/ui $$PWD/core $$PWD/scan $$PWD/type
+INCLUDEPATH += $$PWD/libs/Zydis/include $$PWD/libs/Zydis/src $$PWD/libs/Zycore/include
 
 SOURCES += \
     core/process_manager.cpp \
@@ -31,15 +33,51 @@ SOURCES += \
     libs/Imgui/imgui_impl_dx11.cpp \
     main.cpp \
     ui/address_list_panel.cpp \
+    ui/assembler_window.cpp \
     ui/debug_panel.cpp \
+    ui/hex_view.cpp \
+    ui/zydis_disassembler.cpp \
+    ui/memory_window.cpp \
     ui/process_detail_window.cpp \
     ui/process_list_window.cpp \
+    ui/process_icon_cache.cpp \
     ui/scan_panel.cpp \
     ui/result_panel.cpp \
     ui/settings_window.cpp \
-    ui/top_menu.cpp
+    ui/top_menu.cpp \
+    libs/Zydis/src/Zydis.c \
+    libs/Zydis/src/MetaInfo.c \
+    libs/Zydis/src/Mnemonic.c \
+    libs/Zydis/src/Register.c \
+    libs/Zydis/src/SharedData.c \
+    libs/Zydis/src/String.c \
+    libs/Zydis/src/Utils.c \
+    libs/Zydis/src/Decoder.c \
+    libs/Zydis/src/DecoderData.c \
+    libs/Zydis/src/Encoder.c \
+    libs/Zydis/src/EncoderData.c \
+    libs/Zydis/src/Disassembler.c \
+    libs/Zydis/src/Formatter.c \
+    libs/Zydis/src/FormatterBuffer.c \
+    libs/Zydis/src/FormatterATT.c \
+    libs/Zydis/src/FormatterBase.c \
+    libs/Zydis/src/FormatterIntel.c \
+    libs/Zydis/src/Segment.c \
+    libs/Zycore/src/API/Memory.c \
+    libs/Zycore/src/API/Process.c \
+    libs/Zycore/src/API/Synchronization.c \
+    libs/Zycore/src/API/Terminal.c \
+    libs/Zycore/src/API/Thread.c \
+    libs/Zycore/src/Allocator.c \
+    libs/Zycore/src/ArgParse.c \
+    libs/Zycore/src/Bitset.c \
+    libs/Zycore/src/Format.c \
+    libs/Zycore/src/List.c \
+    libs/Zycore/src/ZycoreString.c \
+    libs/Zycore/src/Vector.c \
+    libs/Zycore/src/Zycore.c
 
-LIBS += -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -ldwmapi
+LIBS += -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -ldwmapi -lshell32
 
 HEADERS += \
     core/imemory_accessor.h \
@@ -75,10 +113,16 @@ HEADERS += \
     type/module_info.h \
     type/process_info.h \
     type/value_type.h \
+    type/process_arch.h \
     ui/address_list_panel.h \
+    ui/assembler_window.h \
     ui/debug_panel.h \
+    ui/hex_view.h \
+    ui/zydis_disassembler.h \
+    ui/memory_window.h \
     ui/process_detail_window.h \
     ui/process_list_window.h \
+    ui/process_icon_cache.h \
     ui/top_menu.h \
     ui/ui_state.h \
     ui/scan_panel.h \

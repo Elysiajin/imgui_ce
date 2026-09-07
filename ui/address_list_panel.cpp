@@ -1,6 +1,8 @@
 ﻿#include "address_list_panel.h"
 #include "address_value.h"
+#include "app_context.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 
 #include <algorithm>
 #include <chrono>
@@ -49,6 +51,16 @@ void address_list_panel::update_values() {
     }
 }
 
+// 每帧把 frozen 行的基准值写回内存，实现"数据冻结"。
+// 冻结目标值 = previous_value（加入/扫描时的基准值，用户改值后同步更新）。
+void address_list_panel::apply_freeze() {
+    if (!process_manager::instance().is_attached()) return;
+    for (auto& r : records_) {
+        if (!r.frozen || r.previous_value.empty()) continue;
+        write_address_value(r.real_address, r.type, r.previous_value);
+    }
+}
+
 void address_list_panel::begin_edit(uint64_t id, std::string initial) {
     auto* rec = find_record(id);
     if (!rec) return;
@@ -84,11 +96,17 @@ static const char* k_type_names[] = {
 static_assert(IM_ARRAYSIZE(k_type_names) == 7);
 
 void address_list_panel::render() {
+    // 冻结：先把冻结行的基准值写回，再刷新显示
+    apply_freeze();
     // 实时刷新值 + 高亮
     update_values();
 
     // 让表格吃满可用高度，表格自身可滚动
     float avail = ImGui::GetContentRegionAvail().y;
+
+    // 右键菜单的固定 ID：在窗口 ID 栈上取一次，OpenPopupEx/BeginPopupEx 共用，
+    // 保证右键打开与 BeginPopup 命中同一个弹出层。
+    const ImGuiID row_menu_id = ImGui::GetID("##row_menu");
 
     if (ImGui::BeginChild("addr_list", ImVec2(0, avail), ImGuiChildFlags_Borders)) {
         if (ImGui::BeginTable("##addr_table", 5,
@@ -101,7 +119,7 @@ void address_list_panel::render() {
             ImGui::TableSetupColumn("Value");
             ImGui::TableHeadersRow();
 
-            for (auto& r : records_) {
+    for (auto& r : records_) {
                 ImGui::PushID((int)r.id);
 
                 ImGui::TableNextRow();
@@ -119,15 +137,15 @@ void address_list_panel::render() {
                     }
                     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) edit_id_ = 0;
                 } else {
-                    if (ImGui::Selectable(r.description.c_str())) {
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    if (ImGui::Selectable(r.description.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                             edit_col_ = 1;
                             begin_edit(r.id, r.description);
                         }
                     }
                     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                         selected_row_id_ = r.id;
-                        ImGui::OpenPopup("##row_menu");
+                        ImGui::OpenPopupEx(row_menu_id, ImGuiPopupFlags_MouseButtonRight);
                     }
                 }
 
@@ -135,14 +153,16 @@ void address_list_panel::render() {
                 ImGui::TableSetColumnIndex(2);
                 char buf[32];
                 snprintf(buf, sizeof(buf), "%016llX", r.real_address);
-                if (ImGui::Selectable(buf)) {
-                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        // TODO: 打开内存浏览器跳到此地址
+                if (ImGui::Selectable(buf, false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        // 双击地址：跳到内存浏览器十六进制 dump 视图
+                        application_context::instance().open_memory_viewer.emit(
+                            memory_viewer_mode::hexdump, r.real_address);
                     }
                 }
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                     selected_row_id_ = r.id;
-                    ImGui::OpenPopup("##row_menu");
+                    ImGui::OpenPopupEx(row_menu_id, ImGuiPopupFlags_MouseButtonRight);
                 }
 
                 // ---- 第3列：类型（下拉框）----
@@ -181,8 +201,8 @@ void address_list_panel::render() {
                     ImVec4 col = (r.changed) ? ImVec4(1.f, 0.4f, 0.4f, 1.f)
                                              : ImGui::GetStyleColorVec4(ImGuiCol_Text);
                     ImGui::PushStyleColor(ImGuiCol_Text, col);
-                    if (ImGui::Selectable(r.value.c_str())) {
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    if (ImGui::Selectable(r.value.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                             edit_col_ = 4;
                             begin_edit(r.id, r.value);
                         }
@@ -190,7 +210,7 @@ void address_list_panel::render() {
                     ImGui::PopStyleColor();
                     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                         selected_row_id_ = r.id;
-                        ImGui::OpenPopup("##row_menu");
+                        ImGui::OpenPopupEx(row_menu_id, ImGuiPopupFlags_MouseButtonRight);
                     }
                 }
 
@@ -202,14 +222,23 @@ void address_list_panel::render() {
     ImGui::EndChild();
 
     // ---- 数据行右键菜单 ----
-    if (ImGui::BeginPopup("##row_menu")) {
-        address_record* rec = find_record(selected_row_id_);
-        if (rec) {
+    if (ImGui::BeginPopupEx(row_menu_id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
+        if (address_record* rec = find_record(selected_row_id_)) {
             if (ImGui::MenuItem("Freeze", nullptr, &rec->frozen)) {
                 // TODO: 真正执行写冻结值
             }
-            if (ImGui::MenuItem("Show in hex", nullptr, &rec->show_hex)) {}
-            if (ImGui::Separator(), ImGui::MenuItem("Modify")) {
+            if (ImGui::MenuItem("Show in hex")) {  }
+            ImGui::Separator();
+            if (ImGui::MenuItem("View in dump")) {
+                application_context::instance().open_memory_viewer.emit(
+                    memory_viewer_mode::hexdump, rec->real_address);
+            }
+            if (ImGui::MenuItem("View in disassembly")) {
+                application_context::instance().open_memory_viewer.emit(
+                    memory_viewer_mode::disassembly, rec->real_address);
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Modify")) {
                 edit_col_ = 4;
                 begin_edit(rec->id, rec->value);
             }
@@ -219,9 +248,16 @@ void address_list_panel::render() {
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Delete")) {
-                remove_record(rec->id);
+                pending_delete_id_ = rec->id;   // 行循环内不直接删除，见循环结束后的清理
             }
         }
         ImGui::EndPopup();
+    }
+
+    // 行循环已结束，此处移除菜单请求删除的行是安全的。
+    if (pending_delete_id_ != 0) {
+        remove_record(pending_delete_id_);
+        pending_delete_id_ = 0;
+        edit_id_ = 0;
     }
 }

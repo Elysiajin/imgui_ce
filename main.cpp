@@ -11,6 +11,9 @@
 #include "ui/settings_window.h"
 #include "ui/app_context.h"
 #include "ui/address_list_panel.h"
+#include "ui/process_icon_cache.h"
+#include "ui/memory_window.h"
+// #include "ui/assembler_window.h"
 #include "core/event/signal.h"
 #include "scan/scan_service.h"
 
@@ -62,6 +65,7 @@ int main()
 
     if (!CreateDeviceD3D(hwnd)) { CleanupDeviceD3D(); UnregisterClassW(wc.lpszClassName, wc.hInstance); return 1; }
     ShowWindow(hwnd, SW_HIDE);
+    // ShowWindow(hwnd, SW_NORMAL);
     UpdateWindow(hwnd);
 
     IMGUI_CHECKVERSION();
@@ -76,6 +80,7 @@ int main()
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_device, g_context);
+    process_icon_cache::instance().set_device(g_device);
 
     static ui_state g_ui_state;
     process_list_window process_window(g_ui_state);
@@ -83,9 +88,21 @@ int main()
     debug_panel dpanel;
     auto& app_ctx = application_context::instance();
     settings_window settings(g_ui_state);
+    memory_window   hex_window(g_ui_state);
     scan_panel scan_panel(g_ui_state, app_ctx);
     result_panel result_panel(app_ctx);
     top_menu main_menu(g_ui_state);
+    // assembler_window assembler_window(g_ui_state);
+
+    // 内存浏览器跳转：面板只发信号，由这里统一改 ui_state 的可见性与视图状态。
+    app_ctx.open_memory_viewer.connect([](memory_viewer_mode mode, uint64_t addr) {
+        g_ui_state.show_memory_window = true;
+        g_ui_state.memory_view_mode   = mode;
+        if (mode == memory_viewer_mode::disassembly)
+            g_ui_state.disasm_view_address = addr;
+        else
+            g_ui_state.dump_view_address   = addr;
+    });
 
     bool done = false;
     while (!done) {
@@ -143,6 +160,10 @@ int main()
                     ImGui::Text("QQ:3264688446");
                 }
                 ImGui::End();
+            }
+
+            if(g_ui_state.show_memory_window){
+                hex_window.render();
             }
 
             // Debug panel (system monitor) — opened from About menu
