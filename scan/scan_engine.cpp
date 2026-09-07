@@ -97,6 +97,8 @@ static inline bool compare_value_next(T cur, T old, T v1, T v2, next_scan_type n
     switch (nt) {
         case next_scan_type::equal:     match = (cur == v1); break;
         case next_scan_type::not_equal:  match = (cur != v1); break;
+        case next_scan_type::greater_than: match = (cur >  v1); break;
+        case next_scan_type::less_than:    match = (cur <  v1); break;
         case next_scan_type::increased:   match = (cur >  old); break;
         case next_scan_type::decreased:   match = (cur <  old); break;
         case next_scan_type::changed:     match = (cur != old); break;
@@ -104,6 +106,7 @@ static inline bool compare_value_next(T cur, T old, T v1, T v2, next_scan_type n
         case next_scan_type::between:     match = (cur >= v1 && cur <= v2); break;
         case next_scan_type::increased_by: match = (cur >  old + v1); break;
         case next_scan_type::decreased_by: match = (cur <  old - v1); break;
+        case next_scan_type::ignore_value: match = true; break;   // 忽略值：保留当前结果
         case next_scan_type::compare_to_first_scan: match = (cur == old); break;
         default: break;
     }
@@ -1048,34 +1051,37 @@ void scan_engine::task_next_scan(const scan_request& request,
 		T cur_val, old_val;
 		if (!current_snapshot->read_value(res.address, cur_val)) continue;
 
-		bool match = false;
-		switch (request.next_type) {
-		case next_scan_type::equal:
-			if constexpr (std::is_floating_point_v<T>) {
-				// ★ 浮点数 Equal 使用 Epsilon 范围匹配
-				match = (cur_val >= v1 && cur_val <= v2);
-			} else {
-				match = (cur_val == v1);
-			}
-			break;
-		case next_scan_type::not_equal:
-			if constexpr (std::is_floating_point_v<T>) {
-				// ★ 浮点数 not_equal 在范围外
-				match = (cur_val < v1 || cur_val > v2);
-			} else {
-				match = (cur_val != v1);
-			}
-			break;
-		case next_scan_type::increased: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val > old_val); break;
-		case next_scan_type::decreased: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val < old_val); break;
-		case next_scan_type::changed:   if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val != old_val); break;
-		case next_scan_type::unchanged: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val == old_val); break;
-		case next_scan_type::between:   match = (cur_val >= v1 && cur_val <= v2); break;
-        case next_scan_type::increased_by: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val > old_val + v1); break;
-        case next_scan_type::decreased_by: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val < old_val - v1); break;
-		case next_scan_type::compare_to_first_scan: if (first_snap && first_snap->read_value(res.address, old_val)) match = (cur_val == old_val); break;
-		default: break;
-		}
+            bool match = false;
+            switch (request.next_type) {
+            case next_scan_type::equal:
+                if constexpr (std::is_floating_point_v<T>) {
+                    // ★ 浮点数 Equal 使用 Epsilon 范围匹配
+                    match = (cur_val >= v1 && cur_val <= v2);
+                } else {
+                    match = (cur_val == v1);
+                }
+                break;
+            case next_scan_type::not_equal:
+                if constexpr (std::is_floating_point_v<T>) {
+                    // ★ 浮点数 not_equal 在范围外
+                    match = (cur_val < v1 || cur_val > v2);
+                } else {
+                    match = (cur_val != v1);
+                }
+                break;
+            case next_scan_type::greater_than: match = (cur_val > v1); break;
+            case next_scan_type::less_than:    match = (cur_val < v1); break;
+            case next_scan_type::increased: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val > old_val); break;
+            case next_scan_type::decreased: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val < old_val); break;
+            case next_scan_type::changed:   if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val != old_val); break;
+            case next_scan_type::unchanged: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val == old_val); break;
+            case next_scan_type::between:   match = (cur_val >= v1 && cur_val <= v2); break;
+            case next_scan_type::increased_by: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val > old_val + v1); break;
+            case next_scan_type::decreased_by: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val < old_val - v1); break;
+            case next_scan_type::ignore_value: match = true; break;   // 忽略值：保留当前结果
+            case next_scan_type::compare_to_first_scan: if (first_snap && first_snap->read_value(res.address, old_val)) match = (cur_val == old_val); break;
+            default: break;
+            }
 		// ★ 勾选了"非" → 反转匹配条件（精确数值反转 → 非精确数值，以此类推）
 		if (request.not_match) match = !match;
 		if (match) survivors.push_back(res);
@@ -1315,35 +1321,38 @@ void scan_engine::task_full_scan_with_next_condition(const scan_request& request
 				T cur_val;
 				std::memcpy(&cur_val, mem_buf.data() + off, sizeof(T));
 
-				bool match = false;
-				switch (request.next_type) {
-				case next_scan_type::equal:
-					if constexpr (std::is_floating_point_v<T>) {
-						match = (cur_val >= v1 && cur_val <= v2);
-					} else {
-						match = (cur_val == v1);
+					bool match = false;
+					switch (request.next_type) {
+					case next_scan_type::equal:
+						if constexpr (std::is_floating_point_v<T>) {
+							match = (cur_val >= v1 && cur_val <= v2);
+						} else {
+							match = (cur_val == v1);
+						}
+						break;
+					case next_scan_type::not_equal:
+						if constexpr (std::is_floating_point_v<T>) {
+							match = (cur_val < v1 || cur_val > v2);
+						} else {
+							match = (cur_val != v1);
+						}
+						break;
+					case next_scan_type::greater_than: match = (cur_val > v1); break;
+					case next_scan_type::less_than:    match = (cur_val < v1); break;
+					case next_scan_type::ignore_value: match = true; break;
+					case next_scan_type::increased_by:
+						std::memcpy(&placeholder_prev, prev_buf.data() + off, sizeof(T));
+						match = (cur_val > placeholder_prev + v1);
+						break;
+					case next_scan_type::decreased_by:
+						std::memcpy(&placeholder_prev, prev_buf.data() + off, sizeof(T));
+						match = (cur_val < placeholder_prev - v1);
+						break;
+					default:
+						// 安全回退
+						match = false;
+						break;
 					}
-					break;
-				case next_scan_type::not_equal:
-					if constexpr (std::is_floating_point_v<T>) {
-						match = (cur_val < v1 || cur_val > v2);
-					} else {
-						match = (cur_val != v1);
-					}
-					break;
-				case next_scan_type::increased_by:
-					std::memcpy(&placeholder_prev, prev_buf.data() + off, sizeof(T));
-					match = (cur_val > placeholder_prev + v1);
-					break;
-				case next_scan_type::decreased_by:
-					std::memcpy(&placeholder_prev, prev_buf.data() + off, sizeof(T));
-					match = (cur_val < placeholder_prev - v1);
-					break;
-				default:
-					// 安全回退
-					match = false;
-					break;
-				}
 
 				if (match) {
 					batch_results.push_back({ addr });

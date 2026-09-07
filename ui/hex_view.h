@@ -73,6 +73,8 @@ private:
     bool     commit_ascii_edit();
     bool     write_bytes(uint64_t addr, const void* data, size_t n);
     void     goto_address(uint64_t addr);
+    void     go_back();
+    bool     has_back() const { return !back_stack_.empty(); }
 
     ui_state& state_;
 
@@ -90,6 +92,8 @@ private:
     bool     want_scroll_top_ = false;  // 跳转后把子窗口滚动归零
     uint64_t selected_addr_ = 0;
     bool     has_selection_ = false;
+    // 跳转回退栈（CE 的 THexView.backlist）：goto / Follow pointer 前压栈，Back 弹出
+    std::vector<uint64_t> back_stack_;
 
     // ---- 编辑状态 ----
     bool     edit_open_  = false;

@@ -294,13 +294,16 @@ void scan_panel::render() {
     } else {
         static const struct { next_scan_type t; const char* label; } k_np[] = {
             { next_scan_type::equal,    "Exact Value" },
+            { next_scan_type::greater_than, "Bigger than" },
+            { next_scan_type::less_than,    "Smaller than" },
+            { next_scan_type::between,  "Between" },
             { next_scan_type::changed,  "Changed value" },
             { next_scan_type::unchanged,"Unchanged value" },
             { next_scan_type::increased,"Increased value" },
             { next_scan_type::decreased,"Decreased value" },
             { next_scan_type::increased_by, "Increased by" },
             { next_scan_type::decreased_by, "Decreased by" },
-            { next_scan_type::between,  "Between" },
+            { next_scan_type::ignore_value, "Ignore value" },
             { next_scan_type::compare_to_first_scan, "Compare to first scan" },
         };
         const char* labels[IM_ARRAYSIZE(k_np)];
@@ -326,7 +329,7 @@ void scan_panel::render() {
         ImGui::Checkbox("executable",         &state_.executable);
         ImGui::Checkbox("Copy on write",      &state_.copy_on_write);
         ImGui::Checkbox("Fast Scan",          &state_.fast_scan);
-        if (first_list)
-            ImGui::Checkbox("Not match",      &state_.not_match);
+        // 首次与再次扫描都支持"非"取反（CE 在两种扫描下都提供 Not 语义）
+        ImGui::Checkbox("Not match",          &state_.not_match);
     }
 }

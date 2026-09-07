@@ -172,6 +172,16 @@ void memory_window::render_disasm_toolbar()
     ImGui::Checkbox("Symbols", &disasm_show_symbols_);
 
     ImGui::SameLine();
+    // 跳转回退（CE 的 Back 菜单项）：仅当有历史时可用
+    if (!disasm_has_back())
+        ImGui::BeginDisabled();
+    if (ImGui::Button("Back")) {
+        disasm_go_back();
+    }
+    if (!disasm_has_back())
+        ImGui::EndDisabled();
+
+    ImGui::SameLine();
     ImGui::SetNextItemWidth(190);
     if (ImGui::InputTextWithHint("##disasm_goto", "Goto address (hex), Enter",
                                  disasm_goto_buf_, sizeof(disasm_goto_buf_),
@@ -240,11 +250,32 @@ static uint64_t backward_top_address(disassembler& d, uint64_t base, int lines)
 
 void memory_window::disasm_jump_to(uint64_t addr)
 {
+    // 显式跳转前把当前地址压入回退栈（CE 的 backlist.Push）。
+    // going_back 或地址未变时不压栈，避免回退操作本身再次入栈 / 重复入栈。
+    if (!disasm_going_back_ &&
+        state_.disasm_view_address != 0 &&
+        state_.disasm_view_address != addr) {
+        disasm_back_stack_.push_back(state_.disasm_view_address);
+        if (disasm_back_stack_.size() > 512)
+            disasm_back_stack_.erase(disasm_back_stack_.begin());
+    }
+
     state_.disasm_view_address = addr;
     disasm_base_ = addr;
     disasm_selected_ = addr;
     disasm_base_history_.clear();
     disasm_scroll_top_ = true;
+}
+
+void memory_window::disasm_go_back()
+{
+    if (disasm_back_stack_.empty())
+        return;
+    const uint64_t addr = disasm_back_stack_.back();
+    disasm_back_stack_.pop_back();
+    disasm_going_back_ = true;
+    disasm_jump_to(addr);
+    disasm_going_back_ = false;
 }
 
 void memory_window::render_disassembly_view() {

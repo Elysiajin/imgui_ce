@@ -140,8 +140,18 @@ void result_panel::render() {
                     std::string cur  = provider->get_current_value(r.address, dt);
                     std::string prev = provider->get_previous_value(r.address, dt);
 
+                    // 值变动红色高亮（仿 CE found list 的 ChangedValueColor = clRed）：
+                    // 当前值与上一快照值不同，且两者均可读（非 "---"）时标红。
+                    const bool changed = !cur.empty() && !prev.empty() &&
+                                         cur != "---" && prev != "---" &&
+                                         cur != prev;
+
                     ImGui::TableSetColumnIndex(1);
+                    if (changed)
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.35f, 0.35f, 1.f));
                     ImGui::TextUnformatted(cur.c_str());
+                    if (changed)
+                        ImGui::PopStyleColor();
 
                     ImGui::TableSetColumnIndex(2);
                     ImGui::TextUnformatted(prev.c_str());

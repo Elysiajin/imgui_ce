@@ -12,4 +12,12 @@ enum class value_type : uint8_t {
     float32,
     float64,
     text,
+    byte_array,
+};
+
+// 地址栏数值显示的进制（对应 CE 内存记录 / hexview 的 showashex + 本项目增强的八进制）。
+enum class value_radix : uint8_t {
+    decimal = 0,   // 有符号十进制
+    hex     = 1,   // 十六进制
+    octal   = 2,   // 八进制
 };

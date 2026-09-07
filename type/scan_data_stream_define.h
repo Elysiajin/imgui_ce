@@ -21,6 +21,8 @@ enum class next_scan_type
 {
     equal,
     not_equal,
+    greater_than,     // 再次扫描：大于固定值（CE Bigger than...）
+    less_than,        // 再次扫描：小于固定值（CE Smaller than...）
     increased,
     decreased,
     changed,
@@ -29,6 +31,7 @@ enum class next_scan_type
     increased_by,
     decreased_by,
     ends_with,
+    ignore_value,     // 再次扫描：忽略值（CE soForgot，保留当前结果不做过滤）
     compare_to_first_scan
 };
 

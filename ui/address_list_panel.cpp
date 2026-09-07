@@ -43,7 +43,7 @@ void address_list_panel::update_values() {
     if (!process_manager::instance().is_attached()) return;
 
     for (auto& r : records_) {
-        std::string cur = read_address_value(r.real_address, r.type);
+        std::string cur = read_address_value(r.real_address, r.type, r.radix);
         r.value = cur;
         // previous_value 是"加入/扫描时的基准值"，不动；
         // 实时值 != 基准值 → 红色高亮
@@ -78,7 +78,7 @@ void address_list_panel::commit_edit(address_record* rec) {
         break;
     }
     case 4: {
-        if (write_address_value(rec->real_address, rec->type, edit_buf_)) {
+        if (write_address_value(rec->real_address, rec->type, edit_buf_, rec->radix)) {
             rec->value = edit_buf_;
             rec->previous_value = edit_buf_;
             rec->changed = false;
@@ -91,9 +91,13 @@ void address_list_panel::commit_edit(address_record* rec) {
 
 // 地址列表类型名（与 value_type 枚举序一致）
 static const char* k_type_names[] = {
-    "Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text"
+    "Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Array of Byte"
 };
-static_assert(IM_ARRAYSIZE(k_type_names) == 7);
+static_assert(IM_ARRAYSIZE(k_type_names) == 8);
+
+// 进制显示名（与 value_radix 枚举序一致）
+static const char* k_radix_names[] = { "Decimal", "Hex", "Octal" };
+static_assert(IM_ARRAYSIZE(k_radix_names) == 3);
 
 void address_list_panel::render() {
     // 冻结：先把冻结行的基准值写回，再刷新显示
@@ -178,7 +182,7 @@ void address_list_panel::render() {
                                 r.type = static_cast<value_type>(i);
                                 // 类型改变后重读当前值并重置基准
                                 r.previous_value.clear();
-                                r.value = read_address_value(r.real_address, r.type);
+                                r.value = read_address_value(r.real_address, r.type, r.radix);
                                 r.previous_value = r.value;
                                 r.changed = false;
                             }
@@ -227,7 +231,21 @@ void address_list_panel::render() {
             if (ImGui::MenuItem("Freeze", nullptr, &rec->frozen)) {
                 // TODO: 真正执行写冻结值
             }
-            if (ImGui::MenuItem("Show in hex")) {  }
+            // 进制显示子菜单：Decimal / Hex / Octal（对应需求"自定义进制显示"）
+            if (ImGui::BeginMenu("Display as")) {
+                int r_idx = static_cast<int>(rec->radix);
+                if (r_idx < 0 || r_idx >= (int)IM_ARRAYSIZE(k_radix_names)) r_idx = 0;
+                for (int i = 0; i < (int)IM_ARRAYSIZE(k_radix_names); ++i) {
+                    if (ImGui::MenuItem(k_radix_names[i], nullptr, i == r_idx)) {
+                        rec->radix = static_cast<value_radix>(i);
+                        rec->show_hex = (i == (int)value_radix::hex);
+                        rec->value = read_address_value(rec->real_address, rec->type, rec->radix);
+                        rec->previous_value = rec->value;
+                        rec->changed = false;
+                    }
+                }
+                ImGui::EndMenu();
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("View in dump")) {
                 application_context::instance().open_memory_viewer.emit(

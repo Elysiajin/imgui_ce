@@ -19,7 +19,8 @@ struct address_record {
     std::string  previous_value;            // 上一次的值（用于变色）
 
     bool    frozen    = false;              // 是否锁定（激活）
-    bool    show_hex  = false;              // 该行十六进制显示
+    bool    show_hex  = false;              // 该行十六进制显示（兼容旧字段，实际以 radix 为准）
+    value_radix radix = value_radix::decimal; // 数值显示进制（Hex/Dec/Oct）
     bool    writable  = false;
 
     bool    changed   = false;              // 值是否刚变动过（上色用）

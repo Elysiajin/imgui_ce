@@ -186,8 +186,32 @@ void hex_view::render()
 
 void hex_view::goto_address(uint64_t addr)
 {
+    // 跳转前压栈（CE 的 THexView.AddToBackList），供 Back 回退。
+    // 地址未变时不重复压栈。
+    if (view_base_ != 0 && view_base_ != (addr & ~(uint64_t)(k_bytes_per_row - 1))) {
+        back_stack_.push_back(view_base_);
+        if (back_stack_.size() > 512)
+            back_stack_.erase(back_stack_.begin());
+    }
+
     last_target_ = addr;
     view_base_ = addr & ~(uint64_t)(k_bytes_per_row - 1);
+    selected_addr_ = addr;
+    has_selection_ = true;
+    edit_open_ = false;
+    want_scroll_top_ = true;
+}
+
+void hex_view::go_back()
+{
+    if (back_stack_.empty())
+        return;
+    const uint64_t addr = back_stack_.back();
+    back_stack_.pop_back();
+    // 把外部跳转目标标记为"已消费"，避免下一帧 render() 因
+    // state_.dump_view_address != last_target_ 再次触发 goto_address 覆盖回退结果。
+    last_target_ = state_.dump_view_address;
+    view_base_ = addr;
     selected_addr_ = addr;
     has_selection_ = true;
     edit_open_ = false;
@@ -214,6 +238,16 @@ void hex_view::render_toolbar()
         ImGui::BeginDisabled();
     ImGui::Checkbox("Hex", &hex_display_);
     if (!ti.is_int)
+        ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    // 跳转回退（CE 的 hexview Back）：仅当有历史时可用
+    if (!has_back())
+        ImGui::BeginDisabled();
+    if (ImGui::Button("Back")) {
+        go_back();
+    }
+    if (!has_back())
         ImGui::EndDisabled();
 
     ImGui::SameLine();

@@ -28,6 +28,9 @@ private:
     void auto_navigate_on_attach();
     // 反汇编显式跳转（goto/Follow/箭头点击/自动定位）：重置解码窗口与滚动
     void disasm_jump_to(uint64_t addr);
+    // 反汇编跳转回退：弹出 back 栈上一地址（CE GoBack 语义）
+    void disasm_go_back();
+    bool disasm_has_back() const { return !disasm_back_stack_.empty(); }
     // 跳转箭头层（x64dbg 风格 gutter，层级排布 + 悬停/点击交互）
     void draw_jump_arrows(float gutter_x0, const std::vector<float>& row_tops,
                           float text_h);
@@ -49,6 +52,10 @@ private:
     bool                       disasm_show_call_ = true;   // 箭头开关：函数调用
     char                       disasm_goto_buf_[64] = {};
     std::vector<uint64_t>      disasm_base_history_;  // 窗口前进历史（向上滚动回退用）
+    // 跳转回退栈（CE 的 disassemblerview.backlist）：Follow/goto/箭头点击等显式
+    // 跳转前把旧地址压栈，"Back" 按钮弹出回退。与分页前进历史分离。
+    std::vector<uint64_t>      disasm_back_stack_;
+    bool                       disasm_going_back_ = false;
     uint32_t                   navigated_pid_ = 0;    // 已做过自动定位的 pid
 
     // ---- hex dump 视图 ----
