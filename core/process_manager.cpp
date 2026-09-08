@@ -125,3 +125,11 @@ void process_manager::update_modules()
     else
         modules_.clear();
 }
+
+bool process_manager::terminate_process(uint32_t pid) {
+    HANDLE h_process = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    if(!h_process) return false;
+    BOOL result = TerminateProcess(h_process, 1);
+    CloseHandle(h_process);
+    return result == TRUE;
+}

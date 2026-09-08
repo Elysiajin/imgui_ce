@@ -31,6 +31,7 @@ SOURCES += \
     libs/Imgui/imgui_demo.cpp \
     libs/Imgui/imgui_impl_win32.cpp \
     libs/Imgui/imgui_impl_dx11.cpp \
+    libs/Imgui/TextEditor.cpp \
     main.cpp \
     ui/address_list_panel.cpp \
     ui/assembler_window.cpp \
@@ -100,6 +101,8 @@ HEADERS += \
     scan/scan_service.h \
     scan/process_memory_snapshot_manager.h \
     scan/win32_process_memory_snapshot.h \
+    scan/sparse_memory_snapshot.h \
+    scan/live_process_memory_snapshot.h \
     scan/adaptive_cache.h \
     scan/thread_pool.h \
     scan/scan_simd_accelerate.h \

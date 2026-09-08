@@ -15,12 +15,14 @@
 scan_panel::scan_panel(ui_state& ui, application_context& ctx) : state_(ui), ctx_(ctx) {
     // 订阅扫描完成信号：由后台线程通过 post_to_main 调度到主线程触发。
     // connect 需要 std::shared_ptr 接收方，这里用无接收者版本（不检查生命周期）。
+    //   扫描完成后切到"再次扫描"语义（CE 的 First Scan → Next Scan）：
+    //   条件列表随之换成 Increased/Decreased/Changed/Unchanged 那一套。
     ctx_.scan_finished.connect([this] {
         // 消费一次性标记：更新 UI 状态（首次扫描完成后切换条件列表）。
         if (scan_service::instance().scan_finished())
             scan_service::instance().consume_scan_done();
         state_.first_scan_done = true;
-        state_.scan_mode = scan_mode::first;
+        state_.scan_mode = scan_mode::next;
     });
     subscribed_ = true;
 }
@@ -175,7 +177,10 @@ void scan_panel::render() {
     if (svc.scan_finished()) {
         svc.consume_scan_done();
         state_.first_scan_done = true;
-        state_.scan_mode = scan_mode::first;
+        // ★ 之前这里把 scan_mode 复位成 first，导致"Scan Type"永远停在首次扫描的
+        //   5 个选项上，再次扫描的 未变动/增加/减少 等值类型根本选不到。
+        //   CE 的行为就是：首次扫描结束后按钮语义变成 Next Scan，条件列表同步切换。
+        state_.scan_mode = scan_mode::next;
     }
 
     if (attached) {
@@ -275,13 +280,17 @@ void scan_panel::render() {
     ImGui::Combo("Value Type", &dt_idx, dt_labels, IM_ARRAYSIZE(dt_labels));
     state_.data_type_ = k_data_types[dt_idx].type;
 
-    const bool first_list = !state_.first_scan_done || state_.scan_mode == scan_mode::first;
+    // ★ 只按"当前按钮语义"决定列表：First Scan → 首次条件；Next Scan → 再次条件。
+    //   旧写法是 `!first_scan_done || scan_mode == first`，配合上面把 scan_mode
+    //   复位成 first 的 bug，首次列表会被永久钉住。
+    const bool first_list = (state_.scan_mode == scan_mode::first);
     if (first_list) {
+        // CE 首次扫描的 5 个条件
         static const struct { scan_type t; const char* label; } k_ip[] = {
             { scan_type::exact_value,     "Exact Value" },
-            { scan_type::greater_than,    "Greater than" },
-            { scan_type::less_than,       "Less than" },
-            { scan_type::between,        "Between" },
+            { scan_type::greater_than,    "Bigger than" },
+            { scan_type::less_than,       "Smaller than" },
+            { scan_type::between,         "Value between" },
             { scan_type::unknown_initial, "Unknown initial value" },
         };
         const char* labels[IM_ARRAYSIZE(k_ip)];
@@ -292,18 +301,20 @@ void scan_panel::render() {
         ImGui::Combo("Scan Type", &idx, labels, IM_ARRAYSIZE(k_ip));
         state_.first_scan_type_ = k_ip[idx].t;
     } else {
+        // CE 再次扫描条件（顺序对齐 CE：Exact / Increased / Increased by /
+        // Decreased / Decreased by / Changed / Unchanged / Bigger / Smaller / Between）
         static const struct { next_scan_type t; const char* label; } k_np[] = {
-            { next_scan_type::equal,    "Exact Value" },
-            { next_scan_type::greater_than, "Bigger than" },
-            { next_scan_type::less_than,    "Smaller than" },
-            { next_scan_type::between,  "Between" },
-            { next_scan_type::changed,  "Changed value" },
-            { next_scan_type::unchanged,"Unchanged value" },
-            { next_scan_type::increased,"Increased value" },
-            { next_scan_type::decreased,"Decreased value" },
-            { next_scan_type::increased_by, "Increased by" },
-            { next_scan_type::decreased_by, "Decreased by" },
-            { next_scan_type::ignore_value, "Ignore value" },
+            { next_scan_type::equal,                 "Exact Value" },
+            { next_scan_type::increased,             "Increased value" },
+            { next_scan_type::increased_by,          "Increased value by" },
+            { next_scan_type::decreased,             "Decreased value" },
+            { next_scan_type::decreased_by,          "Decreased value by" },
+            { next_scan_type::changed,               "Changed value" },
+            { next_scan_type::unchanged,             "Unchanged value" },
+            { next_scan_type::greater_than,          "Bigger than" },
+            { next_scan_type::less_than,             "Smaller than" },
+            { next_scan_type::between,               "Value between" },
+            { next_scan_type::ignore_value,          "Ignore value" },
             { next_scan_type::compare_to_first_scan, "Compare to first scan" },
         };
         const char* labels[IM_ARRAYSIZE(k_np)];

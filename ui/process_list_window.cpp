@@ -1,4 +1,4 @@
-﻿#include "process_list_window.h"
+#include "process_list_window.h"
 #include "imgui.h"
 #include "ui/process_icon_cache.h"
 #include "core/process_manager.h"
@@ -23,15 +23,8 @@ void process_list_window::render() {
     }
 
     if (ImGui::Begin("Process Window", &state_.show_process_window, ImGuiWindowFlags_NoCollapse)) {
-        // 手动刷新按钮
-        if (ImGui::Button("Refresh")) {
-            process_list_ = pm.processes().enumerate();
-            std::sort(process_list_.begin(), process_list_.end(),
-                      [](const process_info& a, const process_info& b) {
-                          return a.pid < b.pid;
-                      });
-            last_refresh_ = std::chrono::steady_clock::now();
-        }
+        ImGui::InputText("Filter", filter_buf_, IM_ARRAYSIZE(filter_buf_));
+
         ImGui::Separator();
 
         if (ImGui::BeginTable("Process Tab", 4,
@@ -46,7 +39,20 @@ void process_list_window::render() {
 
             auto& icon_cache = process_icon_cache::instance();
 
+            std::string filter_str = filter_buf_;
+            std::transform(filter_str.begin(), filter_str.end(), filter_str.begin(), ::tolower);
+            bool has_filter = !filter_str.empty();
+
             for (const auto& p : process_list_) {
+                if(has_filter){
+                    // 过滤
+                    std::string name_lower = p.name;
+                    std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+                    if(name_lower.find(filter_str) == std::string::npos){
+                        continue;
+                    }
+                }
+
                 ImGui::PushID(static_cast<int>(p.pid));
 
                 ImGui::TableNextRow();
@@ -56,11 +62,12 @@ void process_list_window::render() {
                 snprintf(pid_buf, IM_ARRAYSIZE(pid_buf), "%u [%X]", p.pid, p.pid);
 
                 bool clicked = ImGui::Selectable(pid_buf, selected_pid_ == static_cast<int>(p.pid),
-                                                 ImGuiSelectableFlags_SpanAllColumns);
+                                                 ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
                 if (clicked) {
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         pm.attach(p.pid);
                         state_.modules_loaded = false;
+                        state_.show_process_window = false;
                     } else {
                         selected_pid_ = static_cast<int>(p.pid);
                     }
@@ -82,7 +89,10 @@ void process_list_window::render() {
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Terminate Process")) {
-                        // TODO: 终止进程
+                        if(!process_manager::terminate_process(p.pid)){
+                            // ImGui::OpenPopup("Terminater Error");
+                            error_window_ = true;
+                        }
                     }
 
                     ImGui::EndPopup();
@@ -107,6 +117,23 @@ void process_list_window::render() {
 
             ImGui::EndTable();
         }
+
+        if(error_window_){
+            ImGui::OpenPopup("Terminater Error");
+        }
+
+        if(ImGui::BeginPopupModal("Terminater Error", &error_window_, ImGuiWindowFlags_AlwaysAutoResize)){
+            ImGui::TextUnformatted("Terminate Process Failed!");
+            if(ImGui::Button("Close", ImVec2(120, 0))){
+                ImGui::CloseCurrentPopup();
+                error_window_ = false;
+            }
+
+            ImGui::EndPopup();
+        }
+        // if(error_window_){
+
+        // }
     }
     ImGui::End();
 }

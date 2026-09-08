@@ -184,6 +184,30 @@ static constexpr AllTypeInvokerEntry k_all_type_invokers[] = {
 };
 static constexpr int k_all_num_types = 6;
 
+// 建快照阶段要读的字节数换算成"进度单位"，让进度条在这一段也能动起来。
+static int snapshot_units_for(const std::vector<memory_region>& regions)
+{
+	uint64_t total = 0;
+	for (const auto& r : regions) total += r.size;
+	const uint64_t unit = process_memory_snapshot_manager::k_progress_unit_bytes;
+	return static_cast<int>((total + unit - 1) / unit);
+}
+
+// 把结果池里的地址全部取出来（分页读，避免一次性拷贝大数组）
+static std::vector<uint64_t> collect_result_addresses(
+	const std::shared_ptr<adaptive_cache_pool<scan_result>>& cache)
+{
+	std::vector<uint64_t> addrs;
+	const size_t n = cache->total_size();
+	addrs.reserve(n);
+	constexpr size_t k_page = 65536;
+	for (size_t off = 0; off < n; off += k_page) {
+		auto page = cache->read_chunk(off, k_page);
+		for (const auto& r : page) addrs.push_back(r.address);
+	}
+	return addrs;
+}
+
 
 scan_engine::scan_engine(process_memory_snapshot_manager* process_snapshot_manager):
 	m_process_snapshot_manager(process_snapshot_manager) 
@@ -226,14 +250,31 @@ void scan_engine::dispatch_all_scan(const scan_request& request,
 	std::shared_ptr<adaptive_cache_pool<scan_result>> out_cache)
 {
 	auto regions = process_manager::instance().get_memory_regions(request);
-	auto current_snap = std::shared_ptr<i_process_memory_snapshot>(m_process_snapshot_manager->create_snapshot(regions));
+
+	// ★ 进度条：把"读目标进程内存、建快照"这一段也算进总进度（见 dispatch_scan 注释）
+	const bool need_full_snapshot =
+		(request.mode == scan_mode::first && request.first_type == scan_type::unknown_initial) ||
+		(request.mode == scan_mode::next && prev_results.empty() && m_potential_address.load() > 0);
+	const int snap_units = need_full_snapshot ? snapshot_units_for(regions) : 0;
+	const int scan_items = (request.mode == scan_mode::first)
+		? static_cast<int>(regions.size())
+		: ((prev_results.empty() && m_potential_address.load() > 0)
+			? static_cast<int>(regions.size())
+			: static_cast<int>(prev_results.size()));
+	m_total_items.store(snap_units + scan_items);
+
+	std::shared_ptr<i_process_memory_snapshot> current_snap;
+	if (need_full_snapshot)
+		current_snap = m_process_snapshot_manager->create_snapshot(regions,
+			[this](int units) { m_progress.fetch_add(units, std::memory_order_relaxed); });
+	else
+		current_snap = m_process_snapshot_manager->create_live_snapshot();
 	auto prev_snap = m_process_snapshot_manager->get_previous_process_memory_snapshot();
 
 	std::vector<std::future<void>> futures;
 
 	if (request.mode == scan_mode::first) {
 		if (request.first_type == scan_type::unknown_initial) {
-			m_total_items.store(static_cast<int>(regions.size()));
 			m_potential_address.store(0);
 			for (const auto& region : regions) {
 				size_t count = region.size / 1;
@@ -243,18 +284,16 @@ void scan_engine::dispatch_all_scan(const scan_request& request,
 			m_process_snapshot_manager->set_first_snapshot(current_snap);
 			m_process_snapshot_manager->set_previous_snapshot(current_snap);
 		} else {
-			m_total_items.store(static_cast<int>(regions.size()));
 			for (const auto& region : regions) {
 				futures.push_back(global_thread_pool::instance().enqueue(
 					[this, request, region, current_snap, out_cache] {
 						task_first_scan_all(request, region, current_snap, out_cache);
 					}));
 			}
-			m_process_snapshot_manager->set_first_snapshot(current_snap);
+			// first 快照在扫描结束后用结果地址构造（见尾部）
 		}
 	} else {
 		if (prev_results.empty() && m_potential_address.load() > 0) {
-			m_total_items.store(static_cast<int>(regions.size()));
 			m_potential_address.store(0);
 			for (const auto& region : regions) {
 				futures.push_back(global_thread_pool::instance().enqueue(
@@ -263,7 +302,6 @@ void scan_engine::dispatch_all_scan(const scan_request& request,
 					}));
 			}
 		} else {
-			m_total_items.store(static_cast<int>(prev_results.size()));
 			const size_t batch_size = 4096;
 			for (size_t i = 0; i < prev_results.size(); i += batch_size) {
 				std::vector<scan_result> batch;
@@ -280,7 +318,17 @@ void scan_engine::dispatch_all_scan(const scan_request& request,
 	for (auto& fut : futures) {
 		if (fut.valid()) fut.get();
 	}
-	m_process_snapshot_manager->set_previous_snapshot(current_snap);
+
+	if (need_full_snapshot) {
+		m_process_snapshot_manager->set_previous_snapshot(current_snap);
+	} else {
+		// All 类型每个地址读 8 字节（覆盖 int64/double），稀疏快照按 8 字节保存
+		auto sparse = m_process_snapshot_manager->create_sparse_snapshot(
+			collect_result_addresses(out_cache), 8, current_snap);
+		m_process_snapshot_manager->set_previous_snapshot(sparse);
+		if (request.mode == scan_mode::first)
+			m_process_snapshot_manager->set_first_snapshot(sparse);
+	}
 }
 
 /// 官方 CE 兼容的 All 类型选择：
@@ -716,7 +764,33 @@ void scan_engine::dispatch_scan(const scan_request& request, const std::vector<s
 	std::shared_ptr<adaptive_cache_pool<scan_result>> out_cache)
 {
 	auto regions = process_manager::instance().get_memory_regions(request);
-	auto current_snap = std::shared_ptr<i_process_memory_snapshot>(m_process_snapshot_manager->create_snapshot(regions));
+
+	// ★ 只有"未知初始值"路径才需要整份内存快照：
+	//   - 普通首次扫描直接边读边匹配（CE 的 firstScan 就是这么干的，读 512KB 块，
+	//     命中即入结果区，中间不落整份内存文件）；
+	//   - unknown_initial 首扫没有结果集，下一轮要做全内存比较，才需要保留全量快照；
+	//   - unknown_initial 之后的"全内存再扫描"同样需要当前全量快照。
+	const bool need_full_snapshot =
+		(request.mode == scan_mode::first && request.first_type == scan_type::unknown_initial) ||
+		(request.mode == scan_mode::next && prev_results.empty() && m_potential_address.load() > 0);
+
+	// ★ 进度条：把"读目标进程内存、建快照"这一段也算进总进度。
+	//   旧实现只在快照建完之后才设置 m_total_items，导致点击扫描后进度条
+	//   长时间停在 0%（大目标进程尤其明显），看起来像卡死。
+	const int snap_units = need_full_snapshot ? snapshot_units_for(regions) : 0;
+	const int scan_items = (request.mode == scan_mode::first)
+		? static_cast<int>(regions.size())
+		: ((prev_results.empty() && m_potential_address.load() > 0)
+			? static_cast<int>(regions.size())
+			: static_cast<int>(prev_results.size()));
+	m_total_items.store(snap_units + scan_items);
+
+	std::shared_ptr<i_process_memory_snapshot> current_snap;
+	if (need_full_snapshot)
+		current_snap = m_process_snapshot_manager->create_snapshot(regions,
+			[this](int units) { m_progress.fetch_add(units, std::memory_order_relaxed); });
+	else
+		current_snap = m_process_snapshot_manager->create_live_snapshot();
 	auto prev_snap = m_process_snapshot_manager->get_previous_process_memory_snapshot();
 
 
@@ -726,7 +800,6 @@ void scan_engine::dispatch_scan(const scan_request& request, const std::vector<s
 	if (request.mode == scan_mode::first) {
 		// ── unknown_initial 首次扫描：只计数，不存地址 ──
 		if (request.first_type == scan_type::unknown_initial) {
-			m_total_items.store(static_cast<int>(regions.size()));
 			m_potential_address.store(0);
 			for (const auto& memory_region_section : regions) {
 				// 直接在此计数，无需提交到 out_cache，避免海量地址占用内存
@@ -737,19 +810,18 @@ void scan_engine::dispatch_scan(const scan_request& request, const std::vector<s
 			m_process_snapshot_manager->set_first_snapshot(current_snap);
 			m_process_snapshot_manager->set_previous_snapshot(current_snap);
 		} else {
-			m_total_items.store(static_cast<int>(regions.size()));
 			for (const auto& memory_region_section : regions) {
 				futures.push_back(global_thread_pool::instance().enqueue([this, request, memory_region_section, current_snap, out_cache] {
 					task_first_scan<T>(request, memory_region_section, current_snap, out_cache);
 					}));
 			}
-			m_process_snapshot_manager->set_first_snapshot(current_snap);
+			// ★ 首次扫描（非 unknown_initial）走实时读，first 快照在扫描结束后
+			//   用结果地址构造（见下方尾部），这里不再把 live 快照当 first 存。
 		}
 	}
 	else {
 		// ── unknown_initial 之后的再次扫描：全内存遍历 + next-scan 条件 ──
 		if (prev_results.empty() && m_potential_address.load() > 0) {
-			m_total_items.store(static_cast<int>(regions.size()));
 			m_potential_address.store(0); // 重置，后续再次扫描走常规逻辑
 			for (const auto& memory_region_section : regions) {
 				futures.push_back(global_thread_pool::instance().enqueue(
@@ -758,7 +830,6 @@ void scan_engine::dispatch_scan(const scan_request& request, const std::vector<s
 					}));
 			}
 		} else {
-			m_total_items.store(static_cast<int>(prev_results.size()));
 			const size_t batch_size = 4096;
 			for (size_t i = 0; i < prev_results.size(); i += batch_size) {
 				std::vector<scan_result> batch;
@@ -777,7 +848,19 @@ void scan_engine::dispatch_scan(const scan_request& request, const std::vector<s
 	for (auto& fut : futures) {
 		if (fut.valid()) fut.get();
 	}
-	m_process_snapshot_manager->set_previous_snapshot(current_snap);
+
+	if (need_full_snapshot) {
+		m_process_snapshot_manager->set_previous_snapshot(current_snap);
+	} else {
+		// 实时读模式：把存活地址上的当前值固化成稀疏快照，作为下一轮的"上一次值"。
+		// 100 万结果也只占 ~16MB 内存，比再来一份几百 MB 的全量快照便宜得多。
+		auto sparse = m_process_snapshot_manager->create_sparse_snapshot(
+			collect_result_addresses(out_cache), sizeof(T), current_snap);
+		m_process_snapshot_manager->set_previous_snapshot(sparse);
+		// 首次扫描还需提供 first 快照，供"与首次扫描比较"（compare_to_first_scan）用
+		if (request.mode == scan_mode::first)
+			m_process_snapshot_manager->set_first_snapshot(sparse);
+	}
 }
 
 template <typename T>
@@ -867,6 +950,11 @@ void scan_engine::task_first_scan(const scan_request& request, memory_region reg
 			std::memcpy(target_buf.data() + i, &v1, sizeof(T));
 	}
 
+	// 复用同一个结果向量：旧写法在每 64KB chunk 里新建 vector，
+	// 640MB 目标就有 1 万次堆分配 + 反复扩容，纯浪费。
+	std::vector<uint64_t> matched_addrs;
+	matched_addrs.reserve(4096);
+
 	for (size_t base_offset = 0; base_offset < region.size; base_offset += chunk_size) {
 		if (m_cancel.load()) break;
 		size_t to_read = std::min(chunk_size, region.size - base_offset);
@@ -882,7 +970,7 @@ void scan_engine::task_first_scan(const scan_request& request, memory_region reg
 		}
 		else if (!is_float_approx && (request.first_type == scan_type::exact_value) && !request.not_match) {
 			// ── 精确值匹配 SIMD ──
-			std::vector<uint64_t> matched_addrs;
+			matched_addrs.clear();
 			simd_scanner::scan_memory_block_for_matches<T>(mem_buf.data(), target_buf.data(), to_read,
 				region.base + base_offset, step, SimdOp::equal, matched_addrs);
 			for (auto addr : matched_addrs) {
@@ -892,7 +980,7 @@ void scan_engine::task_first_scan(const scan_request& request, memory_region reg
 		}
 		else if (!is_float_approx && (request.first_type == scan_type::exact_value) && request.not_match) {
 			// ── 勾选了"非" + 精确值 → SIMD not_equal ──
-			std::vector<uint64_t> matched_addrs;
+			matched_addrs.clear();
 			simd_scanner::scan_memory_block_for_matches<T>(mem_buf.data(), target_buf.data(), to_read,
 				region.base + base_offset, step, SimdOp::not_equal, matched_addrs);
 			for (auto addr : matched_addrs) {
@@ -903,7 +991,7 @@ void scan_engine::task_first_scan(const scan_request& request, memory_region reg
 		else if (!is_float_approx && !request.not_match && (request.first_type == scan_type::greater_than || request.first_type == scan_type::less_than)) {
 			// 使用 SIMD 加速
 			SimdOp op = (request.first_type == scan_type::greater_than) ? SimdOp::greater : SimdOp::less;
-			std::vector<uint64_t> matched_addrs;
+			matched_addrs.clear();
 			simd_scanner::scan_memory_block_for_matches<T>(mem_buf.data(), target_buf.data(), to_read,
 				region.base + base_offset, step, op, matched_addrs);
 			for (auto addr : matched_addrs) {
@@ -913,7 +1001,7 @@ void scan_engine::task_first_scan(const scan_request& request, memory_region reg
 		}
 		else if (request.first_type == scan_type::between && !request.not_match) {
 			// Between 类型：使用 SIMD 范围扫描加速
-			std::vector<uint64_t> matched_addrs;
+			matched_addrs.clear();
 			simd_scanner::scan_memory_block_for_range<T>(mem_buf.data(), to_read,
 				region.base + base_offset, step, v1, v2, matched_addrs);
 			for (auto addr : matched_addrs) {

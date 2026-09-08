@@ -31,6 +31,14 @@ void assembler_window::render(){
 
             ImGui::EndMenuBar();
         }
+
+        // 代码输入
+        ImGui::Text("%6d lines  |  Ln %d, Col %d",
+                    editor_.GetTotalLines(),
+                    editor_.GetCursorPosition().mLine + 1,
+                    editor_.GetCursorPosition().mColumn + 1);
+        ImGui::Separator();
+        editor_.Render("AssemblerScript");
     }
     // begin里面压栈了，要弹出
     ImGui::End();

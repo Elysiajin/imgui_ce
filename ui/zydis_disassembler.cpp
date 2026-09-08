@@ -150,6 +150,61 @@ std::vector<disasm_line> disassembler::disassemble(uint64_t addr, int count)
             }
         }
 
+// 收集"看起来像绝对地址"的操作数（用于模块+偏移替换到 jcc/jmp/call 之外
+// 的一般指令，覆盖三种形式）：
+//   1) 纯绝对寻址 memory disp（base=NONE 且 index=NONE）—— 直读 disp
+//   2) RIP-relative memory disp（base=RIP 且 index=NONE）—— 绝对地址 =
+//      当前指令末尾地址 (cur + instr.length) + disp（disp 是有符号偏移）
+//   3) 立即数：仅当 Zydis 标记 is_address=true 才纳入。相对地址（is_relative，
+//      如 `call rel32`）用 ZydisCalcAbsoluteAddress 算绝对地址；绝对地址（如
+//      `mov rax, imm64`）直读 value.u。这样可避免对 `mov rax, 0x1234` 这种
+//      普通常量立即数做无意义替换；CE 截图里 `add r28, <module+...>` 也是
+//      这种 absolute immediate。
+// disp/imm=0 跳过（避免无意义替换）。已被 branch_target 覆盖的目标不重复入栈。
+// disp 是有符号 64 位，先转 int64_t 再转 uint64_t 保留位模式。
+for (ZyanU8 oi = 0; oi < instr.operand_count; ++oi) {
+    const auto& op = operands[oi];
+    uint64_t abs_addr = 0;
+    bool     got     = false;
+
+    if (op.type == ZYDIS_OPERAND_TYPE_MEMORY) {
+        if (op.mem.base == ZYDIS_REGISTER_NONE &&
+            op.mem.index == ZYDIS_REGISTER_NONE) {
+            if (op.mem.disp.value != 0) {
+                abs_addr = (uint64_t)(int64_t)op.mem.disp.value;
+                got = true;
+            }
+        } else if (op.mem.base == ZYDIS_REGISTER_RIP &&
+                   op.mem.index == ZYDIS_REGISTER_NONE) {
+            const int64_t sd = (int64_t)op.mem.disp.value;
+            if (sd != 0) {
+                abs_addr = (uint64_t)((int64_t)cur +
+                                      (int64_t)instr.length + sd);
+                got = true;
+            }
+        }
+    } else if (op.type == ZYDIS_OPERAND_TYPE_IMMEDIATE &&
+               op.imm.is_address) {
+        if (op.imm.is_relative) {
+            // 相对地址（call/jmp 这类 rel32/rel16 编码）—— 用 ZydisCalc 算绝对
+            if (ZYAN_SUCCESS(ZydisCalcAbsoluteAddress(
+                    &instr, &op, cur, &abs_addr)) &&
+                abs_addr != 0) {
+                got = true;
+            }
+        } else {
+            // 绝对地址（如 mov rax, imm64）—— 直接读 64 位值
+            if (op.imm.value.u != 0) {
+                abs_addr = op.imm.value.u;
+                got = true;
+            }
+        }
+    }
+
+    if (got && !(line.is_branch && abs_addr == line.branch_target))
+        line.mem_abs_addrs.push_back(abs_addr);
+}
+
         lines.push_back(std::move(line));
 
         off += instr.length;

@@ -9,6 +9,10 @@
 #include "ui/zydis_disassembler.h"
 #include "type/process_arch.h"
 
+#include <cstdint>
+#include <map>
+#include <set>
+#include <string>
 #include <vector>
 
 class memory_window
@@ -34,6 +38,29 @@ private:
     // 跳转箭头层（x64dbg 风格 gutter，层级排布 + 悬停/点击交互）
     void draw_jump_arrows(float gutter_x0, const std::vector<float>& row_tops,
                           float text_h);
+    // 在指令列单元格内绘制着色 token 序列；处理 H 模式点击与指令行双击跟随
+    void render_instr_tokens(uint64_t addr, const std::string& text,
+                             bool is_branch, uint64_t branch_target);
+    // 注释列：显示用户注释（优先）或自动标签；双击进入编辑
+    void render_comment_cell(uint64_t addr, const disasm_line& ln);
+
+    // 用户注释：内存态（addr -> 文本），仅本进程生命周期
+    std::map<uint64_t, std::string> disasm_comments_;
+    uint64_t  comment_edit_addr_ = 0;      // 非 0 = 正在编辑该地址的注释
+    bool      comment_need_focus_ = false; // 编辑框下一帧自动聚焦
+    char      comment_edit_buf_[512] = {};
+
+    // ---- H 高亮模式：按 H 进入/退出；点击指令整条加背景色块，点击寄存器词单独高亮 ----
+    bool       disasm_hl_mode_ = false;
+    struct hl_word_key {
+        uint64_t addr;
+        uint32_t word_idx;
+        bool operator<(const hl_word_key& o) const {
+            return addr != o.addr ? addr < o.addr : word_idx < o.word_idx;
+        }
+    };
+    std::set<uint64_t>          hl_instructions_;   // 整条指令高亮（起始地址）
+    std::set<hl_word_key>       hl_reg_words_;      // 寄存器词高亮
 
     ui_state& state_;
     assembler_window assembler_window_;   // 自动汇编窗口（成员名加下划线，避免与类型同名）

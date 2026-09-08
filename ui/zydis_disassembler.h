@@ -21,6 +21,12 @@ struct disasm_line {
     bool     is_call = false;
     bool     is_ret = false;
     uint64_t branch_target = 0;   // 可解析的绝对目标地址；间接寄存器目标为 0
+
+    // 该指令中所有 memory 操作数里、纯绝对寻址（base=NONE 且 index=NONE）、
+    // disp!=0 的绝对地址。用于把 mov rdx, [0x7FF7...] 这类一般指令中的立即数
+    // 地址也按模块+偏移格式化（jcc/jmp/call 之外的"更一般的"显示）。
+    // 已被 branch_target 覆盖的目标不再重复入栈。
+    std::vector<uint64_t> mem_abs_addrs;
 };
 
 // Zydis 反汇编封装。

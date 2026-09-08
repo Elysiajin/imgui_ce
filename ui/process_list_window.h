@@ -20,6 +20,8 @@ private:
     std::vector<process_info> process_list_;    // 缓存的进程列表
     int selected_pid_ = -1;
     std::chrono::steady_clock::time_point last_refresh_{};  // 上次刷新时刻
+    char filter_buf_[0x100]{};
+    bool     error_window_ = false;
 };
 
 #endif // PROCESS_LIST_WINDOW_H

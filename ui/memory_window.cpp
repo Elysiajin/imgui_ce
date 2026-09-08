@@ -5,6 +5,7 @@
 #include "imgui_internal.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -22,8 +23,8 @@ namespace {
 
 // ---- 跳转箭头 gutter 布局参数（宽度随字体缩放的部分在绘制时计算）----
 constexpr float k_gutter_w  = 50.f;   // 箭头 gutter 列宽
-constexpr float k_lane_w    = 8.f;    // 每层箭头的横向间距
-constexpr int   k_max_slots = 4;      // 最多层级数（超出丢弃，防遮挡）
+constexpr float k_lane_w    = 6.f;    // 每层箭头的横向间距
+constexpr int   k_max_slots = 5;      // 最多层级数（超出丢弃，防遮挡）
 constexpr float k_head_w    = 5.f;    // 箭头三角形宽度
 
 // 解析地址输入：默认按十六进制（CE 习惯），0x 前缀亦可。
@@ -120,6 +121,228 @@ uint64_t query_entry_point(IMemoryAccessor* mem, uint64_t base)
     return aep ? base + aep : 0;
 }
 
+// ============================================================================
+// 反汇编指令行的"词法切分 + 着色"（类 x64dbg）：
+//   不做 Zydis formatter token 集成，直接在已有指令文本上按标点切词并分类，
+//   成本足够低（每帧仅对 ≤150 行做），行为可预期。
+// ============================================================================
+
+enum class wkind { w_mnem, w_reg, w_num, w_sym, w_text, w_punct, w_blank };
+
+struct asm_word {
+    std::string s;
+    wkind       kind = wkind::w_text;
+};
+
+static bool is_asm_punct(char c)
+{
+    return c == '[' || c == ']' || c == '(' || c == ')' ||
+           c == ',' || c == '+' || c == '-' || c == '*' || c == ':';
+}
+
+// x86 前缀指令词（lock/rep...）不是助记符，切词后据此跳过
+static bool is_mnem_prefix(const std::string& w)
+{
+    static const std::set<std::string> pre = {
+        "lock", "rep", "repe", "repz", "repne", "repnz"
+    };
+    return pre.count(w) != 0;
+}
+
+// 常用寄存器（Zydis 输出小写；含 64/32/16/8 位 GPR、段、标志、向量寄存器）
+static const std::set<std::string>& reg_name_set()
+{
+    static const std::set<std::string> s = [] {
+        std::set<std::string> r;
+        const char* base[] = {
+            // 8 位
+            "al","ah","bl","bh","cl","ch","dl","dh",
+            "spl","bpl","sil","dil",
+            // 16 位
+            "ax","bx","cx","dx","si","di","bp","sp","ip",
+            // 32 位
+            "eax","ebx","ecx","edx","esi","edi","ebp","esp","eip",
+            // 64 位
+            "rax","rbx","rcx","rdx","rsi","rdi","rbp","rsp","rip",
+            // 段 / 标志
+            "es","cs","ss","ds","fs","gs","eflags","rflags",
+        };
+        for (const char* n : base) r.insert(n);
+        for (int i = 0; i < 16; ++i) {
+            char b[8];
+            std::snprintf(b, sizeof(b), "r%db", i);  r.insert(b);
+            std::snprintf(b, sizeof(b), "r%dw", i);  r.insert(b);
+            std::snprintf(b, sizeof(b), "r%dd", i);  r.insert(b);
+            std::snprintf(b, sizeof(b), "r%d",  i);  r.insert(b);
+            std::snprintf(b, sizeof(b), "xmm%d", i); r.insert(b);
+            std::snprintf(b, sizeof(b), "ymm%d", i); r.insert(b);
+            std::snprintf(b, sizeof(b), "zmm%d", i); r.insert(b);
+        }
+        for (int i = 16; i < 32; ++i) {
+            char b[8];
+            std::snprintf(b, sizeof(b), "r%db", i);  r.insert(b);
+            std::snprintf(b, sizeof(b), "r%dw", i);  r.insert(b);
+            std::snprintf(b, sizeof(b), "r%dd", i);  r.insert(b);
+            std::snprintf(b, sizeof(b), "r%d",  i);  r.insert(b);
+            std::snprintf(b, sizeof(b), "xmm%d", i); r.insert(b);
+            std::snprintf(b, sizeof(b), "ymm%d", i); r.insert(b);
+            std::snprintf(b, sizeof(b), "zmm%d", i); r.insert(b);
+        }
+        return r;
+    }();
+    return s;
+}
+
+static std::vector<asm_word> split_asm_words(const std::string& t)
+{
+    std::vector<asm_word> out;
+    if (t.empty())
+        return out;
+    const std::string low = [&] {
+        std::string s = t;
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return (char)std::tolower(c); });
+        return s;
+    }();
+
+    // 按原文切分：标点独立成词、**连续空白保留为独立 blank 词**（渲染只推进宽度，
+    // 不画字），这样重排后的间距与原文逐字符一致（", " 不会挤成 ",,"）。
+    // 分类用转小写后的文本。
+    std::string cur;
+    auto flush = [&] {
+        if (!cur.empty()) {
+            asm_word w;
+            w.s = cur;
+            std::string c = cur;
+            std::transform(c.begin(), c.end(), c.begin(),
+                           [](unsigned char ch) { return (char)std::tolower(ch); });
+            if (reg_name_set().count(c))
+                w.kind = wkind::w_reg;
+            else if (std::isdigit((unsigned char)c[0]) ||
+                     (c.size() > 1 && c[0] == '0' && (c[1] == 'x' || c[1] == 'X')) ||
+                     (c.size() > 1 && c.back() == 'h' &&
+                      std::isxdigit((unsigned char)c[c.size() - 2])))
+                w.kind = wkind::w_num;
+            else if (c == "ptr" || c == "byte" || c == "word" ||
+                     c == "dword" || c == "qword" || c == "xmmword" ||
+                     c == "ymmword" || c == "zmmword" || c == "short" ||
+                     c == "near" || c == "far")
+                w.kind = wkind::w_sym;
+            out.push_back(std::move(w));
+            cur.clear();
+        }
+    };
+
+    for (size_t i = 0; i < t.size();) {
+        const char ch = t[i];
+        if (is_asm_punct(ch)) {
+            flush();
+            out.push_back(asm_word{ std::string(1, ch), wkind::w_punct });
+            ++i;
+        } else if (std::isspace((unsigned char)ch)) {
+            flush();
+            size_t j = i;
+            while (j < t.size() && std::isspace((unsigned char)t[j]))
+                ++j;
+            out.push_back(asm_word{ t.substr(i, j - i), wkind::w_blank });
+            i = j;
+        } else {
+            cur += ch;
+            ++i;
+        }
+    }
+    flush();
+    return out;
+}
+
+// 助记符分类（决定整条指令/助记符颜色）
+enum class mne_class { m_data, m_arith, m_jmp, m_jcc, m_call, m_ret, m_stack, m_other };
+
+static mne_class classify_mnemonic(const std::string& m)
+{
+    static const std::set<std::string> data = {
+        "mov","movzx","movsx","movsxd","movsb","movsw","movsd","movsq",
+        "movaps","movapd","movups","movupd","movdqa","movdqu",
+        "lea","xchg","bswap","movbe","cmov","cmove","cmovne","cmovg",
+        "cmovge","cmovl","cmovle","cmova","cmovae","cmovb","cmovbe","cmovs","cmovns",
+    };
+    static const std::set<std::string> arith = {
+        "add","sub","adc","sbb","inc","dec","neg","mul","imul","div","idiv",
+        "and","or","xor","not","shl","shr","sar","rol","ror","rcl","rcr",
+        "test","cmp","cmpsb","scasb",
+        "sete","setne","setg","setge","setl","setle","seta","setae","setb","setbe","sets","setns",
+        "bt","bts","btr","btc","bsf","bsr","popcnt","lzcnt","tzcnt",
+        "addss","addsd","subss","subsd","mulss","mulsd","divss","divsd",
+        "sqrtss","sqrtsd","xorps","andps","orps","maxss","minsd","roundsd",
+        "ucomiss","ucomisd","comiss","comisd","cvtsi2ss","cvtsi2sd","cvttss2si","cvttsd2si",
+    };
+    static const std::set<std::string> jcc_all = {
+        "jo","jno","jb","jnae","jc","jnb","jae","jnc","jz","je","jnz","jne",
+        "jbe","jna","jnbe","ja","js","jns","jp","jpe","jnp","jpo","jl","jnge",
+        "jge","jnl","jle","jng","jg","jnle","jcxz","jecxz","jrcxz",
+    };
+    static const std::set<std::string> stack = {
+        "push","pop","pusha","popa","pushad","popad","pushf","popf","pushfd","popfd",
+        "pushfq","popfq","enter","leave","call",
+    };
+    // 前缀后的真实助记符在 m 里（m 可能形如 "lock add"）
+    std::string real = m;
+    const size_t sp = real.find(' ');
+    if (sp != std::string::npos)
+        real = real.substr(sp + 1);
+    if (real == "call")  return mne_class::m_call;
+    if (real == "ret" || real == "retn" || real == "iret" || real == "iretq")
+        return mne_class::m_ret;
+    if (real == "jmp" || real == "ljmp") return mne_class::m_jmp;
+    if (jcc_all.count(real)) return mne_class::m_jcc;
+    if (stack.count(real))   return mne_class::m_stack;
+    if (arith.count(real))   return mne_class::m_arith;
+    if (data.count(real))    return mne_class::m_data;
+    return mne_class::m_other;
+}
+
+// 依据背景亮度选择深/浅两套指令配色（延续 arrow_palette 的做法）
+static bool dark_ui()
+{
+    const ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    return (bg.x * 0.299f + bg.y * 0.587f + bg.z * 0.114f) <= 0.5f;
+}
+
+static ImVec4 text_color_for(wkind kind, mne_class mc, bool dark)
+{
+    switch (kind) {
+    case wkind::w_reg:
+        return dark ? ImVec4(0.53f, 0.85f, 0.56f, 1.f)
+                    : ImVec4(0.05f, 0.55f, 0.25f, 1.f);   // 寄存器：绿
+    case wkind::w_num:
+        return dark ? ImVec4(0.92f, 0.75f, 0.42f, 1.f)
+                    : ImVec4(0.70f, 0.45f, 0.00f, 1.f);   // 立即数/位移：黄
+    case wkind::w_punct:
+        return dark ? ImVec4(0.48f, 0.48f, 0.52f, 1.f)
+                    : ImVec4(0.45f, 0.45f, 0.45f, 1.f);   // 分隔符：灰
+    case wkind::w_sym:
+        return dark ? ImVec4(0.55f, 0.58f, 0.66f, 1.f)
+                    : ImVec4(0.40f, 0.42f, 0.50f, 1.f);   // ptr/qword：暗灰蓝
+    case wkind::w_text:
+        return dark ? ImVec4(0.62f, 0.65f, 0.72f, 1.f)
+                    : ImVec4(0.30f, 0.32f, 0.38f, 1.f);   // 其它词
+    case wkind::w_mnem:
+        switch (mc) {
+        case mne_class::m_data:  return dark ? ImVec4(0.40f, 0.62f, 0.95f, 1.f) : ImVec4(0.08f, 0.35f, 0.80f, 1.f); // mov 类：蓝
+        case mne_class::m_arith: return dark ? ImVec4(0.78f, 0.48f, 0.90f, 1.f) : ImVec4(0.55f, 0.15f, 0.72f, 1.f); // 算术逻辑：紫
+        case mne_class::m_jmp:   return dark ? ImVec4(1.00f, 0.72f, 0.25f, 1.f) : ImVec4(0.80f, 0.42f, 0.02f, 1.f); // jmp：橙
+        case mne_class::m_jcc:   return dark ? ImVec4(0.85f, 0.62f, 0.35f, 1.f) : ImVec4(0.68f, 0.36f, 0.05f, 1.f); // 条件跳转：暗橙
+        case mne_class::m_call:  return dark ? ImVec4(0.35f, 0.68f, 1.00f, 1.f) : ImVec4(0.05f, 0.40f, 0.85f, 1.f); // call：青蓝
+        case mne_class::m_ret:   return dark ? ImVec4(1.00f, 0.47f, 0.47f, 1.f) : ImVec4(0.80f, 0.10f, 0.10f, 1.f); // ret：红
+        case mne_class::m_stack: return dark ? ImVec4(0.62f, 0.76f, 0.82f, 1.f) : ImVec4(0.15f, 0.45f, 0.55f, 1.f); // push/pop：青灰
+        default:                 return dark ? ImVec4(0.90f, 0.90f, 0.90f, 1.f) : ImVec4(0.15f, 0.15f, 0.15f, 1.f);
+        }
+    case wkind::w_blank:         // 空白词不绘制文字，不设色（防御）
+        return ImVec4(1.f, 1.f, 1.f, 1.f);
+    }
+    return ImVec4(1.f, 1.f, 1.f, 1.f);
+}
+
 } // namespace
 
 // 附加进程后自动定位（CE 行为：打开 Memory Viewer 直接看到目标代码）：
@@ -172,14 +395,15 @@ void memory_window::render_disasm_toolbar()
     ImGui::Checkbox("Symbols", &disasm_show_symbols_);
 
     ImGui::SameLine();
-    // 跳转回退（CE 的 Back 菜单项）：仅当有历史时可用
-    if (!disasm_has_back())
-        ImGui::BeginDisabled();
+    // 跳转回退（CE 的 Back 菜单项）：仅当有历史时可用。
+    // 注意：必须先用局部变量固定 has_back，再无条件配对 Begin/EndDisabled，
+    // 否则点击 Back 后 has_back 在同一帧内翻转（1→0），会导致 EndDisabled 多调一次。
+    const bool has_back = disasm_has_back();
+    ImGui::BeginDisabled(!has_back);
     if (ImGui::Button("Back")) {
         disasm_go_back();
     }
-    if (!disasm_has_back())
-        ImGui::EndDisabled();
+    ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(190);
@@ -291,6 +515,34 @@ void memory_window::render_disassembly_view() {
 
     render_disasm_toolbar();
 
+    // H 键切换"高亮模式"（点击指令/寄存器打色块，再点取消）。
+    // 有文本输入框被激活时（goto 框等）不抢 H 按键。
+    if (ImGui::IsKeyPressed(ImGuiKey_H) && !ImGui::GetIO().WantTextInput &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        disasm_hl_mode_ = !disasm_hl_mode_;
+    }
+    // 模式状态提示（色块图例样式与下方一致）
+    {
+        const ImVec2 hp = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            ImVec2(hp.x + 2.f, hp.y + 2.f),
+            ImVec2(hp.x + 11.f, hp.y + ImGui::GetTextLineHeight() - 1.f),
+            disasm_hl_mode_
+                ? ImGui::ColorConvertFloat4ToU32(ImVec4(1.f, 0.72f, 0.25f, 0.9f))
+                : ImGui::ColorConvertFloat4ToU32(ImVec4(0.45f, 0.45f, 0.45f, 0.6f)));
+        ImGui::Dummy(ImVec2(13.f, 0.f));
+        ImGui::SameLine(0.f, 1.f);
+        ImGui::TextUnformatted(disasm_hl_mode_ ? "H: click instr/reg to highlight  (Esc off)"
+                                               : "H: highlight mode  (H to enter)");
+        if (disasm_hl_mode_ && ImGui::IsKeyPressed(ImGuiKey_Escape))
+            disasm_hl_mode_ = false;
+        ImGui::SameLine(0.f, 24.f);
+        if (ImGui::Button("Clear HL")) {
+            hl_instructions_.clear();
+            hl_reg_words_.clear();
+        }
+    }
+
     // 行高与可视行数（滑动窗口 = 可视行数的 3 倍，滚动到边缘整体重锚）
     const float text_h = ImGui::GetTextLineHeight();
     const float row_h = text_h + ImGui::GetStyle().CellPadding.y * 2.f;
@@ -309,16 +561,28 @@ void memory_window::render_disassembly_view() {
          arch != disasm_cached_arch_ ||
          page_lines != disasm_cached_count_)) {
         disasm_lines_ = disasm_.disassemble(disasm_base_, page_lines);
-        // 分支指令（jcc/jmp/call）的目标地址格式化为 模块+偏移 标签
+        // 把指令中的绝对地址格式化为 <模块+偏移>：
+        //   1) 分支指令（jcc/jmp/call）的目标地址——由 disassembler 填入 branch_target
+        //   2) 一般指令的纯绝对寻址 disp（如 mov rdx, [imm64]）——由 disassembler
+        //      填入 mem_abs_addrs，仅 base/index=NONE 的 memory 操作数参与
+        // 地址不在任何模块范围内时 resolve_address 返回 false，保持 Zydis 输出的
+        // 原始绝对地址文本不变。
         for (auto& ln : disasm_lines_) {
-            if (!ln.is_branch || !ln.branch_target)
-                continue;
-            std::string disp;
-            bool is_base = false;
-            if (process_manager::instance().resolve_address(ln.branch_target,
-                                                            disp, is_base))
-                replace_branch_label(ln.text, ln.branch_target,
-                                     "<" + disp + ">");
+            if (ln.is_branch && ln.branch_target) {
+                std::string disp;
+                bool is_base = false;
+                if (process_manager::instance().resolve_address(
+                        ln.branch_target, disp, is_base))
+                    replace_branch_label(ln.text, ln.branch_target,
+                                         "<" + disp + ">");
+            }
+            for (uint64_t addr : ln.mem_abs_addrs) {
+                std::string disp;
+                bool is_base = false;
+                if (process_manager::instance().resolve_address(
+                        addr, disp, is_base))
+                    replace_branch_label(ln.text, addr, "<" + disp + ">");
+            }
         }
         disasm_cached_base_ = disasm_base_;
         disasm_cached_arch_ = arch;
@@ -368,7 +632,7 @@ void memory_window::render_disassembly_view() {
                 gutter_x0 = gp.x;
                 row_tops.push_back(gp.y);
 
-                // ---- 地址列：行选择（跨列高亮）+ 双击跟随 + 右键菜单 ----
+                // ---- 地址列：行选择 + 右键菜单（双击跟随/编辑注释在各自列内处理）----
                 ImGui::TableSetColumnIndex(1);
                 char abuf[24];
                 snprintf(abuf, sizeof(abuf), "%016llX",
@@ -380,11 +644,6 @@ void memory_window::render_disassembly_view() {
                 if (ImGui::Selectable(abuf, disasm_selected_ == ln.address,
                                       ImGuiSelectableFlags_SpanAllColumns)) {
                     disasm_selected_ = ln.address;
-                }
-                if (ImGui::IsItemHovered() &&
-                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    if (ln.is_branch && ln.branch_target)
-                        disasm_jump_to(ln.branch_target);
                 }
                 if (ImGui::BeginPopupContextItem("##disasm_line")) {
                     if (ln.is_branch && ln.branch_target &&
@@ -405,24 +664,14 @@ void memory_window::render_disassembly_view() {
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextUnformatted(ln.bytes.c_str());
 
-                // ---- 指令列：按控制流类型上色（call 蓝 / jmp 橙 / ret 红）----
+                // ---- 指令列：token 级着色（x64dbg 风格）+ H 高亮点击 + 双击跟随 ----
                 ImGui::TableSetColumnIndex(3);
-                bool colored = false;
-                if (ln.is_call)
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.65f, 1.0f, 1.0f)), colored = true;
-                else if (ln.is_ret)
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f)), colored = true;
-                else if (ln.is_branch)
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.30f, 1.0f)), colored = true;
-                ImGui::TextUnformatted(ln.text.c_str());
-                if (colored)
-                    ImGui::PopStyleColor();
+                render_instr_tokens(ln.address, ln.text,
+                                    ln.is_branch, ln.branch_target);
 
-                // ---- 注释列：模块+偏移 ----
+                // ---- 注释列：用户注释优先，否则自动标签；双击进编辑 ----
                 ImGui::TableSetColumnIndex(4);
-                const std::string comment = disasm_comment_for(ln);
-                if (!comment.empty())
-                    ImGui::TextDisabled("%s", comment.c_str());
+                render_comment_cell(ln.address, ln);
             }
 
             // 行布局完成后统一绘制箭头层（覆盖在 gutter 之上）
@@ -461,6 +710,20 @@ void memory_window::render_disassembly_view() {
             if (new_base < disasm_base_) {
                 disasm_base_ = new_base;
                 ImGui::SetScrollY(page_h);
+            }
+        }
+
+        // ---- 空格键：选中行智能跟随（正在输入文本/编辑注释时忽略）----
+        if (ImGui::IsKeyPressed(ImGuiKey_Space) &&
+            !ImGui::GetIO().WantTextInput && comment_edit_addr_ == 0) {
+            for (const auto& ln : disasm_lines_) {
+                if (ln.address == disasm_selected_) {
+                    if (ln.is_branch && ln.branch_target)
+                        disasm_jump_to(ln.branch_target);
+                    else
+                        state_.dump_view_address = ln.address;   // 普通行：hex dump 定位
+                    break;
+                }
             }
         }
 
@@ -644,8 +907,8 @@ void memory_window::draw_jump_arrows(float gutter_x0,
                 draw_seg(dl, ImVec2(lane_x, ys), ImVec2(lane_x, yd), col, th, dashed);
             draw_seg(dl, ImVec2(lane_x, yd), ImVec2(x_base, yd), col, th, dashed);
             // 目标端箭头（指向代码列）
-            dl->AddTriangleFilled(ImVec2(x_tip, yd), ImVec2(x_base, yd - 3.2f),
-                                  ImVec2(x_base, yd + 3.2f), col);
+            dl->AddTriangleFilled(ImVec2(x_base, yd), ImVec2(x_tip, yd - 3.2f),
+                                  ImVec2(x_tip, yd + 3.2f), col);
         } else {
             // 目标不在视图内：源横线 + 短方向箭头
             const float yend = ys + (a.forward ? 8.f : -8.f);
@@ -697,7 +960,6 @@ void memory_window::render() {
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Auto assembly")) {
-                // TODO
                 state_.show_assembler_window = true;
             }
             ImGui::EndMenu();
@@ -708,7 +970,9 @@ void memory_window::render() {
 
             }
 
+            if(ImGui::MenuItem("PE Analyzer")){
 
+            }
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
@@ -733,4 +997,198 @@ void memory_window::render() {
     }
 
     ImGui::End();
+}
+
+// ============================================================================
+// 指令列：token 级着色绘制 + H 高亮模式点击 + 指令行双击跟随
+// ============================================================================
+void memory_window::render_instr_tokens(uint64_t addr, const std::string& text,
+                                        bool is_branch, uint64_t branch_target)
+{
+    if (text.empty())
+        return;
+    const std::vector<asm_word> words = split_asm_words(text);
+    if (words.empty())
+        return;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float fs = ImGui::GetFontSize();
+    const float line_h = ImGui::GetTextLineHeight();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const bool dark = dark_ui();
+
+    // 助记符 = 第一个非前缀/非空白/非标点词
+    mne_class mc = mne_class::m_other;
+    size_t mn_idx = words.size();   // 助记符所在词下标
+    for (size_t i = 0; i < words.size(); ++i) {
+        const asm_word& w = words[i];
+        if (w.kind == wkind::w_punct || w.kind == wkind::w_blank)
+            continue;
+        if (is_mnem_prefix(w.s)) {
+            continue;
+        }
+        // 行首字母词即助记符（无前缀时即首个词）
+        mc = classify_mnemonic(w.s);
+        mn_idx = i;
+        break;
+    }
+
+    // 整条指令 H 高亮：助记符起画背景块，覆盖到最后一个词
+    if (hl_instructions_.count(addr)) {
+        ImVec2 mins(FLT_MAX, FLT_MAX), maxs(-FLT_MAX, -FLT_MAX);
+        float x = p0.x;
+        for (const auto& w : words) {
+            const ImVec2 sz = font->CalcTextSizeA(fs, FLT_MAX, 0.f, w.s.c_str());
+            mins.x = (std::min)(mins.x, x);
+            mins.y = p0.y;
+            maxs.x = (std::max)(maxs.x, x + sz.x);
+            maxs.y = p0.y + line_h;
+            x += sz.x;
+        }
+        const ImU32 hl_col = dark ? IM_COL32(30, 80, 160, 90)
+                                  : IM_COL32(40, 100, 220, 60);
+        dl->AddRectFilled(mins, maxs, hl_col, 2.f);
+    }
+
+    // 逐词绘制（drawlist 文本，不占用 item 高度；行高由地址列 Selectable 提供）
+    float x = p0.x;
+    const float y = p0.y;
+    bool hovered_any = false;
+    bool click_any = false;
+    bool dbl_click = false;
+    const ImVec2 mouse = ImGui::GetMousePos();
+
+    for (size_t i = 0; i < words.size(); ++i) {
+        const asm_word& w = words[i];
+        const ImVec2 sz = font->CalcTextSizeA(fs, FLT_MAX, 0.f, w.s.c_str());
+        const ImRect r(x, y, x + sz.x, y + line_h);
+
+        // 空白词：只推进 x（间距与原文一致），不绘制、不参与任何交互
+        if (w.kind == wkind::w_blank) {
+            x += sz.x;
+            continue;
+        }
+
+        // 词类型（首词为助记符时使用分类色）
+        const wkind wk = (i == mn_idx) ? wkind::w_mnem : w.kind;
+
+        // ---- H 高亮模式点击：寄存器词单独高亮；助记符词 = 整条指令高亮 ----
+        if (disasm_hl_mode_ && r.Contains(mouse) && !ImGui::GetIO().WantTextInput) {
+            hovered_any = true;
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                click_any = true;
+                if (w.kind == wkind::w_reg) {
+                    hl_word_key key{ addr, (uint32_t)i };
+                    auto it = hl_reg_words_.find(key);
+                    if (it != hl_reg_words_.end()) hl_reg_words_.erase(it);
+                    else                          hl_reg_words_.insert(key);
+                } else if (i == mn_idx) {
+                    auto it = hl_instructions_.find(addr);
+                    if (it != hl_instructions_.end()) hl_instructions_.erase(it);
+                    else                              hl_instructions_.insert(addr);
+                }
+            }
+        }
+
+        // ---- 双击跟随（H 模式下不抢双击；分支指令在指令列双击 = 跳到目标）----
+        if (!disasm_hl_mode_ && r.Contains(mouse) && !ImGui::GetIO().WantTextInput &&
+            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            dbl_click = true;
+            if (is_branch && branch_target)
+                disasm_jump_to(branch_target);
+        }
+
+        // ---- 寄存器词 H 高亮背景 ----
+        const bool reg_hl = hl_reg_words_.count(hl_word_key{ addr, (uint32_t)i }) != 0;
+        if (reg_hl) {
+            const ImU32 bg = dark ? IM_COL32(45, 120, 60, 110)
+                                  : IM_COL32(60, 160, 90, 70);
+            dl->AddRectFilled(r.Min, r.Max, bg, 1.5f);
+        }
+
+        // 文字颜色
+        ImU32 col;
+        if (reg_hl) {
+            col = dark ? IM_COL32(0x8f, 0xff, 0xa8, 255)
+                       : IM_COL32(0x00, 0x60, 0x2a, 255);
+        } else {
+            const ImVec4 c = text_color_for(wk, mc, dark);
+            col = ImGui::ColorConvertFloat4ToU32(c);
+        }
+        dl->AddText(font, fs, ImVec2(x, y), col, w.s.c_str());
+
+        x += sz.x;
+    }
+    (void)hovered_any; (void)click_any; (void)dbl_click;
+}
+
+// ============================================================================
+// 注释列：用户注释优先显示（亮黄色），否则自动标签；双击单元格进入编辑
+// ============================================================================
+void memory_window::render_comment_cell(uint64_t addr, const disasm_line& ln)
+{
+    const bool dark = dark_ui();
+
+    // ---- 正在编辑本行注释：输入框 ----
+    if (comment_edit_addr_ == addr) {
+        if (comment_need_focus_) {
+            ImGui::SetKeyboardFocusHere();
+            comment_need_focus_ = false;
+        }
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const bool enter = ImGui::InputText(
+            "##comment_edit", comment_edit_buf_, sizeof(comment_edit_buf_),
+            ImGuiInputTextFlags_EnterReturnsTrue);
+        if (enter) {                                   // Enter：保存
+            disasm_comments_[addr] = comment_edit_buf_;
+            comment_edit_addr_ = 0;
+        }
+        if (comment_edit_addr_ == addr &&
+            ImGui::IsKeyPressed(ImGuiKey_Escape)) {    // Esc：取消
+            comment_edit_addr_ = 0;
+        }
+        if (comment_edit_addr_ == addr &&
+            ImGui::IsItemDeactivatedAfterEdit()) {     // 点击别处失焦：保存
+            disasm_comments_[addr] = comment_edit_buf_;
+            comment_edit_addr_ = 0;
+        }
+        return;
+    }
+
+    // ---- 显示文本：用户注释优先 ----
+    const std::string comment = [&] {
+        auto it = disasm_comments_.find(addr);
+        if (it != disasm_comments_.end() && !it->second.empty())
+            return it->second;
+        return disasm_comment_for(ln);
+    }();
+    if (comment.empty())
+        return;
+
+    const ImVec2 p   = ImGui::GetCursorScreenPos();
+    const float  lh  = ImGui::GetTextLineHeight();
+    const bool   user_c = disasm_comments_.count(addr) != 0;
+
+    ImVec4 col = user_c ? (dark ? ImVec4(0.95f, 0.80f, 0.42f, 1.f)
+                                : ImVec4(0.60f, 0.42f, 0.00f, 1.f))
+                        : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    ImGui::PushStyleColor(ImGuiCol_Text, col);
+    ImGui::TextUnformatted(comment.c_str());
+    ImGui::PopStyleColor();
+
+    // 双击进入编辑（命中单元格文本区）
+    const ImVec2 sz = ImGui::CalcTextSize(comment.c_str());
+    const ImRect cell(p.x, p.y, p.x + sz.x, p.y + lh);
+    if (comment_edit_addr_ == 0 && !ImGui::GetIO().WantTextInput &&
+        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) &&
+        cell.Contains(ImGui::GetMousePos())) {
+        comment_edit_addr_ = addr;
+        comment_need_focus_ = true;
+        std::memset(comment_edit_buf_, 0, sizeof(comment_edit_buf_));
+        const auto it = disasm_comments_.find(addr);
+        if (it != disasm_comments_.end())
+            std::snprintf(comment_edit_buf_, sizeof(comment_edit_buf_), "%s",
+                          it->second.c_str());
+    }
 }

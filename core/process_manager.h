@@ -47,6 +47,9 @@ public:
     bool resolve_address(uint64_t addr, std::string& out_display, bool& is_base) const;
     std::shared_ptr<process_memory_snapshot_manager> get_snapshot_manager() { return snapshot_manager_; }
 
+
+    // 操作进程
+    static bool terminate_process(uint32_t pid);
 private:
     process_manager() = default;
     ~process_manager() = default;

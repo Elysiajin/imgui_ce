@@ -241,14 +241,15 @@ void hex_view::render_toolbar()
         ImGui::EndDisabled();
 
     ImGui::SameLine();
-    // 跳转回退（CE 的 hexview Back）：仅当有历史时可用
-    if (!has_back())
-        ImGui::BeginDisabled();
+    // 跳转回退（CE 的 hexview Back）：仅当有历史时可用。
+    // 用局部变量固定 has_back，无条件配对 Begin/EndDisabled，避免点击后同一帧
+    // 状态翻转导致 EndDisabled 多调一次而触发断言。
+    const bool has_back = this->has_back();
+    ImGui::BeginDisabled(!has_back);
     if (ImGui::Button("Back")) {
         go_back();
     }
-    if (!has_back())
-        ImGui::EndDisabled();
+    ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(170);
