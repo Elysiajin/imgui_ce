@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 
 namespace {
@@ -305,15 +306,49 @@ bool function_graph_builder::build(uint64_t addr, fg_function& out, std::string&
 
 // ════════════════════════════ 布局 ════════════════════════════
 
+// 块标题：就近符号标签（含相对偏移），无符号回退十六进制地址。
+// 测量与渲染必须共用同一文本，否则标题会溢出块边界。
+static std::string block_title(const fg_block& b, const fg_function& g)
+{
+    (void)g;
+    char t[160];
+    std::string sym = symbol_table::instance().format_symbol(b.start, false);
+    if (!sym.empty())
+        return sym;
+    snprintf(t, sizeof t, "%llX", (unsigned long long)b.start);
+    return t;
+}
+
+// 把指令文本中的原始跳转目标地址替换为 <模块.符号+偏移>（与反汇编视图一致）。
+// 无符号目标保留原始地址文本。
+static void decorate_block_insns(fg_block& b)
+{
+    auto& st = symbol_table::instance();
+    for (auto& in : b.insns) {
+        if (!in.is_branch || in.branch_target == 0) continue;
+        st.ensure_loaded_for_address(in.branch_target);
+        std::string label = st.format_symbol(in.branch_target);
+        if (label.empty()) continue;
+
+        char raw[32];
+        snprintf(raw, sizeof raw, "0x%016llX", (unsigned long long)in.branch_target);
+        size_t pos = in.text.find(raw);
+        if (pos == std::string::npos) {
+            snprintf(raw, sizeof raw, "0x%llX", (unsigned long long)in.branch_target);
+            pos = in.text.find(raw);
+            if (pos == std::string::npos) continue;
+        }
+        in.text.replace(pos, std::strlen(raw), "<" + label + ">");
+    }
+}
+
 // 测量块尺寸（需 ImGui 上下文：用当前字体量文本宽度）
 static void measure_blocks(fg_function& g)
 {
     const float line_h  = ImGui::GetTextLineHeight();
     const float title_h = line_h + kTitlePadY * 2.f;
     for (auto& b : g.blocks) {
-        char t[24];
-        snprintf(t, sizeof t, "%llX", (unsigned long long)b.start);
-        float w = ImGui::CalcTextSize(t).x;
+        float w = ImGui::CalcTextSize(block_title(b, g).c_str()).x;
         for (const auto& in : b.insns)
             w = std::max(w, ImGui::CalcTextSize(in.text.c_str()).x);
         b.w = std::max(w + kPadX * 2.f + 4.f, 70.f);
@@ -532,6 +567,10 @@ void function_graph_window::rebuild(uint64_t addr)
         return;
     }
 
+    // 先装饰指令文本（跳转目标 → 符号标签），保证测量与渲染一致
+    for (auto& b : graph_.blocks)
+        decorate_block_insns(b);
+
     measure_blocks(graph_);
     assign_grid(graph_);
     position_blocks(graph_);
@@ -579,6 +618,10 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
         return;
     }
 
+    // 先量出画布尺寸，重建后 fit_view 才有正确的视口
+    const ImVec2 canvas = ImGui::GetContentRegionAvail();
+    canvas_sz_ = canvas;
+
     if (need_rebuild_) {
         rebuild(pending_addr_);
         need_rebuild_ = false;
@@ -597,8 +640,6 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
                         (int)graph_.blocks.size(), (int)graph_.edges.size(),
                         graph_.truncated ? "  (truncated)" : "");
 
-    const ImVec2 canvas = ImGui::GetContentRegionAvail();
-    canvas_sz_ = canvas;
     ImGui::BeginChild("##fgcanvas", canvas, ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoMove);
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
@@ -728,23 +769,12 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
         if (zoom_ < 0.35f)
             continue;
 
-        // 标题：符号（若有）+ 偏移，否则块起始地址
-        char title[128];
-        {
-            std::string sym = symbol_table::instance().format_symbol(b.start, false);
-            if (b.start == graph_.entry || sym.empty()) {
-                snprintf(title, sizeof title, "%llX", (unsigned long long)b.start);
-            } else {
-                char off[24];
-                snprintf(off, sizeof off, "+%llx",
-                         (unsigned long long)(b.start - graph_.entry));
-                snprintf(title, sizeof title, "%s%s", sym.c_str(), off);
-            }
-        }
+        // 标题：就近符号标签（与测量宽度一致），无符号回退十六进制地址
+        const std::string title = block_title(b, graph_);
         ImFont* font = ImGui::GetFont();
         const float fs = ImGui::GetFontSize() * zoom_;
         dl->AddText(font, fs, ImVec2(sp.x + kPadX * zoom_, sp.y + kTitlePadY * zoom_),
-                    col_text, title);
+                    col_text, title.c_str());
 
         if (zoom_ < 0.75f)
             continue;
