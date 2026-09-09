@@ -35,6 +35,7 @@ SOURCES += \
     libs/Imgui/TextEditor.cpp \
     main.cpp \
     ui/address_list_panel.cpp \
+    ui/function_graph.cpp \
     ui/symbol_table.cpp \
     ui/assembler_window.cpp \
     ui/debug_panel.cpp \
@@ -146,6 +147,7 @@ HEADERS += \
     ui/symbol_table.h \
     ui/zydis_disassembler.h \
     ui/memory_window.h \
+    ui/function_graph.h \
     ui/process_detail_window.h \
     ui/process_list_window.h \
     ui/process_icon_cache.h \

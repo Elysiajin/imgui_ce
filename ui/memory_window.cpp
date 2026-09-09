@@ -439,6 +439,12 @@ void memory_window::render_disasm_toolbar()
     arrow_toggle("Jcc", c_jcc, &disasm_show_jcc_);
     arrow_toggle("Jmp", c_jmp, &disasm_show_jmp_);
     arrow_toggle("Call", c_call, &disasm_show_call_, false);
+
+    // 函数控制流图（Ghidra Function Graph 风格）
+    ImGui::SameLine();
+    if (ImGui::Button("Graph")) {
+        graph_.open_at(disasm_selected_ ? disasm_selected_ : disasm_base_);
+    }
 }
 
 // 把分支指令文本中的裸目标地址（Zydis 输出的 0x+十六进制，兼容大小写/补零）
@@ -702,6 +708,9 @@ void memory_window::render_disassembly_view() {
                     }
                     if (ImGui::MenuItem("Follow in dump")) {
                         state_.dump_view_address = ln.address;
+                    }
+                    if (ImGui::MenuItem("Function graph")) {
+                        graph_.open_at(ln.address);
                     }
                     if (ImGui::MenuItem("Copy address")) {
                         ImGui::SetClipboardText(abuf);
@@ -995,6 +1004,7 @@ void memory_window::render() {
     if (state_.show_assembler_window)
         assembler_window_.render();
     inject_window_.render();
+    graph_.render([this](uint64_t a) { disasm_jump_to(a); });
 
     if (!ImGui::Begin("Memory Viewer", &state_.show_memory_window, ImGuiWindowFlags_MenuBar)) {
         ImGui::End();

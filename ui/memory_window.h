@@ -5,6 +5,7 @@
 #include "imgui.h"
 
 #include "ui/assembler_window.h"
+#include "ui/function_graph.h"
 #include "ui/hex_view.h"
 #include "ui/inject_window.h"
 #include "ui/zydis_disassembler.h"
@@ -66,6 +67,7 @@ private:
     ui_state& state_;
     assembler_window assembler_window_;   // 自动汇编窗口（成员名加下划线，避免与类型同名）
     inject_window    inject_window_;      // 注入窗口（Tools -> Inject 打开）
+    function_graph_window graph_;         // 函数控制流图窗口（Graph 按钮/右键菜单打开）
     // ---- 反汇编视图状态 ----
     disassembler               disasm_;
     std::vector<disasm_line>   disasm_lines_;
