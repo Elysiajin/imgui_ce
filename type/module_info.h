@@ -7,4 +7,5 @@ struct module_info {
     std::string name;
     uint64_t    base;
     uint64_t    size;
+    std::string path;
 };

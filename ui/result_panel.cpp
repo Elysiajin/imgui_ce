@@ -1,4 +1,4 @@
-﻿#include "result_panel.h"
+#include "result_panel.h"
 #include "app_context.h"
 #include "ui/address_list_panel.h"
 #include "ui/address_value.h"
@@ -47,8 +47,6 @@ void result_panel::render() {
 
     ImGui::SameLine();
     const size_t shown = (limit > 0 && (size_t)limit < total) ? (size_t)limit : total;
-    if (svc.is_scanning())
-        ImGui::Text("Scanning...");
     ImGui::Text("Found: %llu     Displaying: %llu", (unsigned long long)total, (unsigned long long)shown);
 
     const scan_data_type dtype = provider->get_display_type();
@@ -102,13 +100,22 @@ void result_panel::render() {
                     ImGui::PushID(row);
                     ImGui::TableNextRow();
 
-                    // Address
+                    // Address（仿 CE：命中模块则显示"模块+偏移"并绿色着色；未命中模块的原始 hex 用默认色）
                     ImGui::TableSetColumnIndex(0);
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "0x%08llX", (unsigned long long)r.address);
-                    if (ImGui::Selectable(buf, selected_row == row, ImGuiSelectableFlags_SpanAllColumns)) {
+                    auto& pm = process_manager::instance();
+                    std::string disp;
+                    bool is_base = false;
+                    bool in_module = pm.is_attached() && pm.resolve_address(r.address, disp, is_base);
+                    if (!in_module) {
+                        char raw[32];
+                        snprintf(raw, sizeof(raw), "0x%08llX", (unsigned long long)r.address);
+                        disp = raw;
+                    }
+                    if (in_module) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.24f, 0.86f, 0.35f, 1.f)); // green
+                    if (ImGui::Selectable(disp.c_str(), selected_row == row, ImGuiSelectableFlags_SpanAllColumns)) {
                         selected_row = row;
                     }
+                    if (in_module) ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         // 双击：把该行地址加入下方地址列表
                         selected_row = row;

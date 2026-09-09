@@ -11,6 +11,7 @@ QMAKE_CXXFLAGS += -mavx2 -mbmi2
 
 INCLUDEPATH += $$PWD $$PWD/libs $$PWD/libs/Imgui $$PWD/ui $$PWD/core $$PWD/scan $$PWD/type
 INCLUDEPATH += $$PWD/libs/Zydis/include $$PWD/libs/Zydis/src $$PWD/libs/Zycore/include
+INCLUDEPATH += $$PWD/libs/S_inject
 
 SOURCES += \
     core/process_manager.cpp \
@@ -34,9 +35,12 @@ SOURCES += \
     libs/Imgui/TextEditor.cpp \
     main.cpp \
     ui/address_list_panel.cpp \
+    ui/symbol_table.cpp \
     ui/assembler_window.cpp \
     ui/debug_panel.cpp \
+    ui/file_browser.cpp \
     ui/hex_view.cpp \
+    ui/inject_window.cpp \
     ui/zydis_disassembler.cpp \
     ui/memory_window.cpp \
     ui/process_detail_window.cpp \
@@ -46,6 +50,20 @@ SOURCES += \
     ui/result_panel.cpp \
     ui/settings_window.cpp \
     ui/top_menu.cpp \
+    libs/S_inject/src/Injector.cpp \
+    libs/S_inject/src/S-Wisper.c \
+    libs/S_inject/src/crypto.cpp \
+    libs/S_inject/src/error.cpp \
+    libs/S_inject/src/helper.cpp \
+    libs/S_inject/src/network.cpp \
+    libs/S_inject/src/poolparty/HandleHijacker.cpp \
+    libs/S_inject/src/poolparty/Misc.cpp \
+    libs/S_inject/src/poolparty/Native.cpp \
+    libs/S_inject/src/poolparty/PoolParty.cpp \
+    libs/S_inject/src/poolparty/ThreadPool.cpp \
+    libs/S_inject/src/poolparty/WinApi.cpp \
+    libs/S_inject/src/poolparty/WorkerFactory.cpp \
+    libs/S_inject/src/app/S-Wisper-asm-x64.S \
     libs/Zydis/src/Zydis.c \
     libs/Zydis/src/MetaInfo.c \
     libs/Zydis/src/Mnemonic.c \
@@ -79,6 +97,8 @@ SOURCES += \
     libs/Zycore/src/Zycore.c
 
 LIBS += -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -ldwmapi -lshell32
+# S-inject backend link-time dependencies
+LIBS += -lntdll -lwininet -lbcrypt -ladvapi32 -lpsapi -lws2_32 -lcrypt32
 
 HEADERS += \
     core/imemory_accessor.h \
@@ -120,7 +140,10 @@ HEADERS += \
     ui/address_list_panel.h \
     ui/assembler_window.h \
     ui/debug_panel.h \
+    ui/file_browser.h \
     ui/hex_view.h \
+    ui/inject_window.h \
+    ui/symbol_table.h \
     ui/zydis_disassembler.h \
     ui/memory_window.h \
     ui/process_detail_window.h \
@@ -128,8 +151,13 @@ HEADERS += \
     ui/process_icon_cache.h \
     ui/top_menu.h \
     ui/ui_state.h \
+    ui/theme.h \
     ui/scan_panel.h \
     ui/result_panel.h \
     ui/app_context.h \
     ui/settings_window.h \
     ui/address_value.h
+
+DISTFILES += \
+    tests/scan_perf.exe
+

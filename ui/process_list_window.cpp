@@ -1,4 +1,4 @@
-#include "process_list_window.h"
+﻿#include "process_list_window.h"
 #include "imgui.h"
 #include "ui/process_icon_cache.h"
 #include "core/process_manager.h"
@@ -86,6 +86,7 @@ void process_list_window::render() {
                         pm.attach(p.pid);
                         state_.modules_loaded = false;
                         state_.show_process_detail = true;
+                        state_.show_process_window = false;
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Terminate Process")) {

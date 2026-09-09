@@ -436,23 +436,18 @@ void scan_engine::task_first_scan_all(const scan_request& request, memory_region
 		if (!current_snap->read_data(chunk_base, mem_buf.data(), to_read)) continue;
 
 		if (use_simd) {
-			// ── SIMD 快速路径：一次 32 字节，6 种类型同时比较 ──
-			// SIMD 部分：处理 floor(to_read / 32) * 32 字节
-			size_t simd_bytes = (to_read / 32) * 32;
-			if (simd_bytes > 0) {
-				std::vector<std::pair<uint64_t, uint16_t>> simd_results;
-				simd_results.reserve(simd_bytes);
-				simd_scanner::scan_all_types_first(
-					mem_buf.data(), simd_bytes, chunk_base,
-					type_v1, simd_op, simd_results);
-				for (auto& pair : simd_results) {
-					batch_results.push_back({ pair.first, pair.second }); // type_mask
+				// SIMD 快速路径：一次 32 字节，6 种类型同时比较。
+				// 内核直接追加 scan_result，省去 pair 中间缓冲与逐条拷贝。
+				size_t simd_bytes = (to_read / 32) * 32;
+				if (simd_bytes > 0) {
+					simd_scanner::scan_all_types_first(
+						mem_buf.data(), simd_bytes, chunk_base,
+						type_v1, simd_op, batch_results);
 					if (batch_results.size() >= 1024) {
 						out_cache->push_back_batch(batch_results);
 						batch_results.clear();
 					}
 				}
-			}
 			// 尾部 < 32 字节：标量兜底
 			for (size_t off = simd_bytes; off + 1 <= to_read; off += 1) {
 				uint64_t addr = chunk_base + off;
@@ -696,22 +691,18 @@ void scan_engine::task_full_scan_with_next_condition_all(const scan_request& req
 		}
 
 		if (use_simd_changed) {
-			// ── SIMD 快速路径：Changed/Unchanged，一次 32 字节，6 种类型同时判定 ──
+			// ── SIMD 快速路径：Changed/Unchanged，一次 32 字节，6 种类型同时判定。
+			// 内核直接追加 scan_result，省去 pair 中间缓冲与逐条拷贝。
 			size_t simd_bytes = (to_read / 32) * 32;
 			if (simd_bytes > 0) {
-				std::vector<std::pair<uint64_t, uint16_t>> simd_results;
-				simd_results.reserve(simd_bytes);
 				simd_scanner::scan_all_types_changed_unchanged(
 					cur_buf.data(), prev_buf.data(),
 					simd_bytes, chunk_base,
 					(request.next_type == next_scan_type::unchanged),
-					simd_results);
-				for (auto& pair : simd_results) {
-					batch_results.push_back({ pair.first, pair.second }); // type_mask
-					if (batch_results.size() >= 4096) {
-						out_cache->push_back_batch(batch_results);
-						batch_results.clear();
-					}
+					batch_results);
+				if (batch_results.size() >= 4096) {
+					out_cache->push_back_batch(batch_results);
+					batch_results.clear();
 				}
 			}
 			// 尾部 < 32 字节：标量兜底

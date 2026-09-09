@@ -195,6 +195,54 @@ static int run_parent(DWORD pid, size_t simd_mb) {
     printf("    hit storage GB/s  = %.2f\n",  gb_per_s(sb, simd_hit_ms));
     printf("  => read : pure-compute = 1 : %.2f\n", (double)rd_ms / (simd_pure_ms?simd_pure_ms:1));
 
+    printf("\n=========== 1b) All 类型结果收集(scall_all_types_first) ===========\n");
+    {
+        size_t dsb = 64u * 1024 * 1024;
+        std::vector<uint8_t> allbuf(dsb, 0); // 全 0
+        uint64_t type_vals[6] = { 0x22, 0x22, 0x22, 0x22, 0x22, 0x22 };
+        // 稀疏：目标值 0x22 只在每页首字节出现 → 仅有 int8 命中
+        for (size_t off = 0; off < dsb; off += 0x1000) allbuf[off] = 0x22;
+
+        std::vector<scan_result> sparse_out;
+        auto st0 = clk::now();
+        simd_scanner::scan_all_types_first(allbuf.data(), dsb, 0x1000000, type_vals,
+                                           SimdOp::equal, sparse_out);
+        long long st = ms_of(st0, clk::now());
+        printf("  All-type sparse     : %5lld ms   hits=%zu   %.2f GB/s\n",
+               st, sparse_out.size(), gb_per_s(dsb, st));
+
+        // 密集：全部字节命中（unknown-initial All 首扫的极端情况）
+        std::vector<uint8_t> densebuf(dsb, 0x22); // 全 0x22 → 每种类型都命中
+        std::vector<scan_result> dense_out;
+        auto dt0 = clk::now();
+        simd_scanner::scan_all_types_first(densebuf.data(), dsb, 0x1000000, type_vals,
+                                           SimdOp::equal, dense_out);
+        long long dt = ms_of(dt0, clk::now());
+        printf("  All-type dense      : %5lld ms   hits=%zu   %.2f GB/s\n",
+               dt, dense_out.size(), gb_per_s(dsb, dt));
+
+        // ── 引擎式密集：按 256KB chunk 扫描，每 chunk 复用缓冲并清空（与 scan_engine 一致），
+        //    避免单个无界大 vector 反复扩容（旧实现还会有整块 pair 中间缓冲+二次拷贝，只会更慢）。
+        {
+            constexpr size_t CH = 256u * 1024u;
+            size_t total_hits = 0;
+            std::vector<scan_result> batch;
+            batch.reserve(4096);
+            auto bt0 = clk::now();
+            for (size_t base = 0; base < dsb; base += CH) {
+                size_t n = std::min(CH, dsb - base);
+                simd_scanner::scan_all_types_first(densebuf.data() + base, n,
+                                                   0x1000000 + base, type_vals,
+                                                   SimdOp::equal, batch);
+                total_hits += batch.size();
+                batch.clear();
+            }
+            long long bt = ms_of(bt0, clk::now());
+            printf("  All-type dense(eng) : %5lld ms   hits=%zu   %.2f GB/s  (chunk 复用缓冲)\n",
+                   bt, total_hits, gb_per_s(dsb, bt));
+        }
+    }
+
     printf("\n=========== 2) 再扫地址读取：逐地址 8B vs 逐页批量 ===========\n");
     // 构造地址集：每页一个对齐地址
     std::vector<const uint8_t*> addrs;

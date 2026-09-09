@@ -1,4 +1,4 @@
-﻿#include "top_menu.h"
+#include "top_menu.h"
 #include "imgui.h"
 
 #include <processthreadsapi.h>

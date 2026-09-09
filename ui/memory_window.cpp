@@ -1,6 +1,7 @@
-﻿#include "memory_window.h"
+#include "memory_window.h"
 
 #include "core/process_manager.h"
+#include "ui/symbol_table.h"
 
 #include "imgui_internal.h"
 
@@ -17,7 +18,7 @@
 // 见 ui_state::memory_view_mode / disasm_view_address / dump_view_address。
 
 memory_window::memory_window(ui_state& ui)
-    : state_(ui), assembler_window_(ui), hex_view_(ui) {}
+    : state_(ui), assembler_window_(ui), inject_window_(), hex_view_(ui) {}
 
 namespace {
 
@@ -345,6 +346,24 @@ static ImVec4 text_color_for(wkind kind, mne_class mc, bool dark)
 
 } // namespace
 
+// 地址标签：优先导出符号（模块.符号+偏移，CE 风格），回退 模块+偏移。
+// 调用前需确保地址所在模块符号已加载（ensure_loaded_for_address）。
+static bool format_addr_label(uint64_t addr, std::string& out)
+{
+    std::string sym = symbol_table::instance().format_symbol(addr);
+    if (!sym.empty()) {
+        out = std::move(sym);
+        return true;
+    }
+    std::string disp;
+    bool is_base = false;
+    if (process_manager::instance().resolve_address(addr, disp, is_base)) {
+        out = std::move(disp);
+        return true;
+    }
+    return false;
+}
+
 // 附加进程后自动定位（CE 行为：打开 Memory Viewer 直接看到目标代码）：
 //   反汇编视图 → 主模块入口点；hex dump → 主模块基址。
 // pid 变化时触发一次（含换进程）；脱离后重新附加会再次定位。
@@ -380,12 +399,11 @@ std::string memory_window::disasm_comment_for(const disasm_line& ln) const
                  (unsigned long long)ln.branch_target);
         return sub;
     }
-    // 普通行（可选）：显示自身 模块+偏移
+    // 普通行（可选）：显示自身符号 / 模块+偏移
     if (disasm_show_symbols_) {
-        std::string disp;
-        bool is_base = false;
-        if (process_manager::instance().resolve_address(ln.address, disp, is_base))
-            return disp;
+        std::string label;
+        if (format_addr_label(ln.address, label))
+            return label;
     }
     return {};
 }
@@ -507,6 +525,9 @@ void memory_window::render_disassembly_view() {
     const process_arch arch = pm.is_attached() ? pm.memory()->architecture()
                                                : process_arch::unknown;
 
+    // 跟随附加进程刷新符号表（pid 变化时重建模块列表；未附加时清空）
+    symbol_table::instance().update_target(pm.attached_pid());
+
     // 架构变化时（32↔64 位切换 / 未附加）重建 decoder。
     disasm_.set_arch(arch);
 
@@ -569,21 +590,39 @@ void memory_window::render_disassembly_view() {
         // 原始绝对地址文本不变。
         for (auto& ln : disasm_lines_) {
             if (ln.is_branch && ln.branch_target) {
-                std::string disp;
-                bool is_base = false;
-                if (process_manager::instance().resolve_address(
-                        ln.branch_target, disp, is_base))
-                    replace_branch_label(ln.text, ln.branch_target,
-                                         "<" + disp + ">");
+                symbol_table::instance().ensure_loaded_for_address(ln.branch_target);
+                std::string label;
+                if (format_addr_label(ln.branch_target, label))
+                    replace_branch_label(ln.text, ln.branch_target, "<" + label + ">");
             }
             for (uint64_t addr : ln.mem_abs_addrs) {
-                std::string disp;
-                bool is_base = false;
-                if (process_manager::instance().resolve_address(
-                        addr, disp, is_base))
-                    replace_branch_label(ln.text, addr, "<" + disp + ">");
+                symbol_table::instance().ensure_loaded_for_address(addr);
+                std::string label;
+                if (format_addr_label(addr, label))
+                    replace_branch_label(ln.text, addr, "<" + label + ">");
             }
         }
+
+        // 地址列符号标签：把符号解析集中在重建时做一次（惰性解析模块导出表 +
+        // 二分查找），渲染时零查询，与 CE"未枚举也直接显示符号"一致。
+        {
+            auto& st = symbol_table::instance();
+            for (const auto& ln : disasm_lines_)
+                st.ensure_loaded_for_address(ln.address);
+
+            disasm_addr_symbols_.clear();
+            disasm_addr_symbols_.reserve(disasm_lines_.size());
+            for (const auto& ln : disasm_lines_) {
+                std::string sym = st.format_symbol(ln.address);
+                if (sym.empty()) {
+                    char b[24];
+                    snprintf(b, sizeof b, "%016llX", (unsigned long long)ln.address);
+                    sym = b;
+                }
+                disasm_addr_symbols_.push_back(std::move(sym));
+            }
+        }
+
         disasm_cached_base_ = disasm_base_;
         disasm_cached_arch_ = arch;
         disasm_cached_count_ = page_lines;
@@ -600,8 +639,14 @@ void memory_window::render_disassembly_view() {
                                 k_gutter_w);
         // 比例字体下按最宽内容样例定宽，保证地址/字节列完整显示；
         // 指令与注释列平分剩余宽度
+        // 地址列宽：hex 与符号标签取较宽者（限制上限，防止超长符号撑爆布局）
+        float addr_col_w = ImGui::CalcTextSize("FFFFFFFFFFFFFFFF").x + 12.f;
+        for (const auto& s : disasm_addr_symbols_)
+            if (!s.empty())
+                addr_col_w = std::max(addr_col_w, ImGui::CalcTextSize(s.c_str()).x + 12.f);
+        addr_col_w = std::min(addr_col_w, ImGui::GetWindowWidth() * 0.45f);
         ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed,
-                                ImGui::CalcTextSize("FFFFFFFFFFFFFFFF").x + 12.f);
+                                addr_col_w);
         ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed,
                                 ImGui::CalcTextSize("00 00 00 00 00 00 00 00 00 00 00 00 00 00 00").x + 10.f);
         ImGui::TableSetupColumn("Instruction", ImGuiTableColumnFlags_WidthStretch, 2.0f);
@@ -637,11 +682,16 @@ void memory_window::render_disassembly_view() {
                 char abuf[24];
                 snprintf(abuf, sizeof(abuf), "%016llX",
                          (unsigned long long)ln.address);
+                // CE 风格：命中符号直接显示 模块.符号(+偏移)，否则十六进制地址
+                const char* row_label = (li < disasm_addr_symbols_.size() &&
+                                         !disasm_addr_symbols_[li].empty())
+                                            ? disasm_addr_symbols_[li].c_str()
+                                            : abuf;
                 // 右键菜单等控件必须按行限定 ID 作用域，否则可视行共用同一个
                 // "##disasm_line" + "Follow"/"Copy address" 标签，触发 ImGui 的
                 // "visible items with conflicting ID" 冲突告警。用行地址低位作唯一 ID。
                 ImGui::PushID((int)(ln.address & 0xffffffff));
-                if (ImGui::Selectable(abuf, disasm_selected_ == ln.address,
+                if (ImGui::Selectable(row_label, disasm_selected_ == ln.address,
                                       ImGuiSelectableFlags_SpanAllColumns)) {
                     disasm_selected_ = ln.address;
                 }
@@ -944,6 +994,7 @@ void memory_window::render() {
 
     if (state_.show_assembler_window)
         assembler_window_.render();
+    inject_window_.render();
 
     if (!ImGui::Begin("Memory Viewer", &state_.show_memory_window, ImGuiWindowFlags_MenuBar)) {
         ImGui::End();
@@ -953,7 +1004,7 @@ void memory_window::render() {
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("Tools")) {
             if (ImGui::MenuItem("Inject")) {
-                // TODO
+                inject_window_.open();
             }
             if (ImGui::MenuItem("Alloc Memory")) {
                 // TODO
@@ -966,8 +1017,8 @@ void memory_window::render() {
         }
 
         if(ImGui::BeginMenu("View Map")){
-            if(ImGui::MenuItem("Module View")){
-
+            if(ImGui::MenuItem("Detail View")){
+                state_.show_process_detail = true;
             }
 
             if(ImGui::MenuItem("PE Analyzer")){

@@ -1,5 +1,6 @@
-﻿#include "settings_window.h"
+#include "settings_window.h"
 #include "imgui.h"
+#include "theme.h"
 #include "scan/temp_path_manager.h"
 
 #include <cstring>
@@ -37,16 +38,23 @@ void settings_window::render() {
 
         ImGui::Separator();
 
-        // ---- 界面风格 ----
+        // ---- 界面风格：下拉遍历主题注册表，便于后续扩展多种样式 ----
         ImGui::Text("Theme");
-        if (ImGui::RadioButton("Dark", state_.theme == 0)) {
-            state_.theme = 0;
-            ImGui::StyleColorsDark();
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Light", state_.theme == 1)) {
-            state_.theme = 1;
-            ImGui::StyleColorsLight();
+        int cur_idx = -1;
+        for (int i = 0; i < theme::count; ++i)
+            if ((int)theme::registry[i].id == state_.theme) { cur_idx = i; break; }
+        const char* preview = (cur_idx >= 0) ? theme::registry[cur_idx].name : "Select theme...";
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo("##theme", preview)) {
+            for (int i = 0; i < theme::count; ++i) {
+                bool selected = (i == cur_idx);
+                if (ImGui::Selectable(theme::registry[i].name, selected)) {
+                    state_.theme = (int)theme::registry[i].id;
+                    theme::apply(theme::registry[i].id);
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
         }
     }
     ImGui::End();

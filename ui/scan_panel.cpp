@@ -1,4 +1,4 @@
-﻿#include "scan_panel.h"
+#include "scan_panel.h"
 #include "app_context.h"
 #include "core/event/signal.h"
 #include "imgui.h"
@@ -184,11 +184,7 @@ void scan_panel::render() {
     }
 
     if (attached) {
-        char pid_buf[64];
-        snprintf(pid_buf, sizeof(pid_buf), "Target: PID %u",
-                 process_manager::instance().attached_pid());
-        ImGui::TextUnformatted(pid_buf);
-
+        // 附加信息（PID / 进程名）已由主窗口顶部常驻状态进度条统一显示
         const char* preview = (state_.module_selected >= 0 &&
                                state_.module_selected < (int)state_.module_names.size())
                                   ? state_.module_names[state_.module_selected].c_str()

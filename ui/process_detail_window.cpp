@@ -1,10 +1,13 @@
-﻿#include "process_detail_window.h"
+#include "process_detail_window.h"
 #include "imgui.h"
+#include "ui/symbol_table.h"
 #include "core/process_manager.h"
 
 #include <windows.h>
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstring>
 
 static const char* region_state_name(uint32_t state) {
     if (state & MEM_COMMIT)  return "Commit";
@@ -18,6 +21,39 @@ static const char* region_type_name(uint32_t type) {
     if (type & MEM_IMAGE)   return "Image";
     if (type & MEM_MAPPED)  return "Mapped";
     return "?";
+}
+
+// ── 模块符号行缓存 ──────────────────────────────────────────
+// sym_rows_ 持有 symbol_table 内部存储的名字指针，因此：
+//   - 仅在"切换模块/切换进程"时重建一次（导出表解析本身也是惰性的）
+//   - 每帧渲染只做遍历 + ListClipper 裁剪，几千个符号也毫无压力
+void process_detail_window::ensure_module_symbols(int mod_idx) {
+    const auto& pm = process_manager::instance();
+    const uint32_t pid = pm.attached_pid();
+
+    if (sym_module_ == mod_idx && sym_pid_ == pid)
+        return;
+
+    sym_rows_.clear();
+    sym_module_ = -1;
+    sym_pid_    = pid;
+
+    auto& st = symbol_table::instance();
+    st.update_target(pid);
+    if (mod_idx < 0 || mod_idx >= (int)modules_.size())
+        return;
+
+    if (!st.ensure_loaded(modules_[mod_idx].base))
+        return;
+
+    const module_symbols* ms = st.find_module(modules_[mod_idx].base);
+    if (!ms || !ms->has_exports)
+        return;
+
+    sym_rows_.reserve(ms->symbols.size());
+    for (const auto& s : ms->symbols)
+        sym_rows_.push_back({ s.address, ms->symbol_name(s) });
+    sym_module_ = mod_idx;
 }
 
 void process_detail_window::render_modules_tab() {
@@ -34,27 +70,79 @@ void process_detail_window::render_modules_tab() {
             state_.module_names.push_back(m.name);
         if (state_.module_selected < 0 || state_.module_selected >= (int)state_.module_names.size())
             state_.module_selected = 0;
+
+        sym_module_ = -1;  // 模块列表变化，行缓存失效
     }
 
-    if (ImGui::BeginTable("##module_table", 3,
-                          ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Base", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Size");
-        ImGui::TableHeadersRow();
+    symbol_table::instance().update_target(pm.attached_pid());
 
-        for (const auto& m : modules_) {
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(m.name.c_str());
+    for (int mi = 0; mi < (int)modules_.size(); ++mi) {
+        const auto& mod = modules_[mi];
+        ImGui::PushID((int)(mod.base & 0xffffffff));
 
-            ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%016llX", (unsigned long long)m.base);
+        if (ImGui::CollapsingHeader(mod.name.c_str())) {
+            ImGui::Text("%s | 0x%llX | 0x%llX", mod.name.c_str(),
+                        (unsigned long long)mod.base, (unsigned long long)mod.size);
 
-            ImGui::TableSetColumnIndex(2);
-            ImGui::Text("0x%llX", (unsigned long long)m.size);
+            ImGui::TextUnformatted("Detailed symbols:");
+            ImGui::Spacing();
+
+            ensure_module_symbols(mi);
+
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+            ImGui::InputTextWithHint("##sym_filter", "Filter symbols", sym_filter_, sizeof sym_filter_);
+
+            if (sym_module_ != mi || sym_rows_.empty()) {
+                ImGui::TextDisabled("(no exports)");
+            } else {
+                const float table_h = std::min(360.0f, ImGui::GetTextLineHeight() * 18.0f);
+                if (ImGui::BeginTable("##syms", 2,
+                                      ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                      ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
+                                      ImVec2(0.f, table_h))) {
+                    ImGui::TableSetupScrollFreeze(0, 1);
+                    ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed,
+                                            ImGui::CalcTextSize("FFFFFFFFFFFF").x + 14.f);
+                    ImGui::TableSetupColumn("Symbol", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableHeadersRow();
+
+                    // 过滤：小写包含匹配（空过滤串 = 全量）
+                    char filter[64];
+                    snprintf(filter, sizeof filter, "%s", sym_filter_);
+                    for (char& c : filter) c = (char)std::tolower((unsigned char)c);
+                    const bool has_filter = filter[0] != 0;
+
+                    ImGuiListClipper clip;
+                    clip.Begin((int)sym_rows_.size());
+                    while (clip.Step()) {
+                        for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
+                            const sym_row& r = sym_rows_[i];
+                            if (has_filter) {
+                                const char* n = r.name;
+                                bool hit = false;
+                                for (const char* p = n; *p; ++p) {
+                                    size_t k = 0;
+                                    while (filter[k] &&
+                                           std::tolower((unsigned char)p[k]) == (unsigned char)filter[k])
+                                        ++k;
+                                    if (!filter[k]) { hit = true; break; }
+                                }
+                                if (!hit) continue;
+                            }
+
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::Text("%llX", (unsigned long long)r.address);
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TextUnformatted(r.name);
+                        }
+                    }
+                    ImGui::EndTable();
+                }
+            }
         }
-        ImGui::EndTable();
+        ImGui::PopID();
+        ImGui::Dummy(ImVec2(-1, 10));
     }
 }
 

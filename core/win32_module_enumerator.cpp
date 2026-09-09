@@ -22,6 +22,7 @@ std::vector<module_info> Win32ModuleEnumerator::enumerate(uint32_t pid)
             info.name = wstring_to_utf8(entry.szModule);
             info.base = reinterpret_cast<uint64_t>(entry.modBaseAddr);
             info.size = entry.modBaseSize;
+            info.path = wstring_to_utf8(entry.szExePath);
             modules.push_back(std::move(info));
         } while (Module32NextW(snapshot, &entry));
     }

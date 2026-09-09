@@ -5,6 +5,7 @@
 #include <cstring>
 #include <type_traits>
 #include <intrin.h>
+#include "type\scan_data_stream_define.h"
 
 // 扫描比较操作类型
 enum class SimdOp { equal, greater, less, not_equal };
@@ -547,10 +548,9 @@ public:
         uint64_t base_addr,
         const uint64_t type_values[6],
         SimdOp op,
-        std::vector<std::pair<uint64_t, uint16_t>>& out_pairs)
+        std::vector<scan_result>& out_results)
     {
         constexpr size_t BLOCK = 32;
-        static constexpr uint8_t k_type_size[] = { 1, 2, 4, 8, 4, 8 };
 
         for (size_t off = 0; off + BLOCK <= mem_size; off += BLOCK) {
             __m256i chunk = _mm256_loadu_si256(
@@ -590,22 +590,20 @@ public:
                 masks[5] = expand_f64_mask(_mm256_movemask_pd(d_cmp), op);
             }
 
-            // ── 对 32 字节逐个偏移，构建完整 type_mask ──
-            for (size_t byte_off = 0; byte_off < BLOCK; ++byte_off) {
-                uint32_t bit = 1u << byte_off;
+            // ── 只有“任一类型”命中的字节才需要解码。
+            // 用 tzcnt 逐个取出命中字节，稀疏场景可跳过绝大多数非命中字节。
+            uint32_t combined =
+                masks[0] | masks[1] | masks[2] | masks[3] | masks[4] | masks[5];
+            while (combined) {
+                uint32_t bit = combined & (~combined + 1); // 最低位
+                int byte_off = (int)__builtin_ctz(combined);
                 uint16_t type_mask = 0;
-                bool any_match = false;
-                // 检查每种类型
                 for (int ti = 0; ti < 6; ++ti) {
-                    if (byte_off % k_type_size[ti] != 0) continue;
-                    if (masks[ti] & bit) {
-                        type_mask |= (1 << ti);
-                        any_match = true;
-                    }
+                    // masks[ti] 只会在合法的类型对齐偏移置位，故无需重复对齐判断
+                    if (masks[ti] & bit) type_mask |= (uint16_t)(1u << ti);
                 }
-                if (any_match) {
-                    out_pairs.emplace_back(chunk_base + byte_off, type_mask);
-                }
+                out_results.emplace_back(scan_result{ chunk_base + byte_off, type_mask });
+                combined &= (combined - 1);
             }
         }
     }
@@ -620,10 +618,9 @@ public:
         const uint8_t* cur_buf, const uint8_t* old_buf,
         size_t mem_size, uint64_t base_addr,
         bool is_unchanged,
-        std::vector<std::pair<uint64_t, uint16_t>>& out_pairs)
+        std::vector<scan_result>& out_results)
     {
         constexpr size_t BLOCK = 32;
-        static constexpr uint8_t k_type_size[] = { 1, 2, 4, 8, 4, 8 };
 
         for (size_t off = 0; off + BLOCK <= mem_size; off += BLOCK) {
             __m256i cur = _mm256_loadu_si256(
@@ -687,22 +684,18 @@ public:
                 m5 = expand_f64_mask(pd4, SimdOp::equal);
             }
 
-            // ── 对 32 字节逐个偏移，构建完整 type_mask ──
+            // ── 同样的 tzcnt 解码：只处理“任一路径命中”的字节 ──
             uint32_t masks[] = { m0, m1, m2, m3, m4, m5 };
-            for (size_t byte_off = 0; byte_off < BLOCK; ++byte_off) {
-                uint32_t bit = 1u << byte_off;
+            uint32_t combined = m0 | m1 | m2 | m3 | m4 | m5;
+            while (combined) {
+                uint32_t bit = combined & (~combined + 1); // 最低位
+                int byte_off = (int)__builtin_ctz(combined);
                 uint16_t type_mask = 0;
-                bool any_match = false;
                 for (int ti = 0; ti < 6; ++ti) {
-                    if (byte_off % k_type_size[ti] != 0) continue;
-                    if (masks[ti] & bit) {
-                        type_mask |= (1 << ti);
-                        any_match = true;
-                    }
+                    if (masks[ti] & bit) type_mask |= (uint16_t)(1u << ti);
                 }
-                if (any_match) {
-                    out_pairs.emplace_back(chunk_base + byte_off, type_mask);
-                }
+                out_results.emplace_back(scan_result{ chunk_base + byte_off, type_mask });
+                combined &= (combined - 1);
             }
         }
     }

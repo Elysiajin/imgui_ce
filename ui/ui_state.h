@@ -1,4 +1,4 @@
-﻿#ifndef UI_STATE_H
+#ifndef UI_STATE_H
 #define UI_STATE_H
 
 #include <cstdint>

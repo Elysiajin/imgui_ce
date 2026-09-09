@@ -1,4 +1,4 @@
-﻿#ifndef MEMORY_WINDOW_H
+#ifndef MEMORY_WINDOW_H
 #define MEMORY_WINDOW_H
 
 #include "ui_state.h"
@@ -6,6 +6,7 @@
 
 #include "ui/assembler_window.h"
 #include "ui/hex_view.h"
+#include "ui/inject_window.h"
 #include "ui/zydis_disassembler.h"
 #include "type/process_arch.h"
 
@@ -64,9 +65,12 @@ private:
 
     ui_state& state_;
     assembler_window assembler_window_;   // 自动汇编窗口（成员名加下划线，避免与类型同名）
+    inject_window    inject_window_;      // 注入窗口（Tools -> Inject 打开）
     // ---- 反汇编视图状态 ----
     disassembler               disasm_;
     std::vector<disasm_line>   disasm_lines_;
+    // 地址列符号标签（与 disasm_lines_ 平行；空串 = 无符号，显示十六进制地址）
+    std::vector<std::string>   disasm_addr_symbols_;
     uint64_t                   disasm_base_ = 0;      // 解码窗口首行地址（滑动窗口随滚动重锚）
     process_arch               disasm_cached_arch_ = process_arch::unknown;
     uint64_t                   disasm_cached_base_ = 0;
