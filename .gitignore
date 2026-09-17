@@ -1,5 +1,7 @@
 # 构建输出
 build/
+release/
+debug/
 *.o
 *.obj
 *.a
@@ -7,6 +9,12 @@ build/
 *.d
 *.exe
 *.dll
+
+# qmake / IDE 生成
+Makefile
+Makefile.*
+.qmake.stash
+.workbuddy/
 
 # Qt Creator
 .qtcreator/

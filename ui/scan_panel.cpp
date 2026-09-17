@@ -39,7 +39,7 @@ static void load_modules_into_state(ui_state& state) {
     state.module_infos = pm.modules().enumerate(pm.attached_pid());
 
     state.module_names.clear();
-    state.module_names.push_back("<All Modules>");
+    state.module_names.push_back("<全部模块>");
     for (const auto& m : state.module_infos)
         state.module_names.push_back(m.name);
 
@@ -102,6 +102,14 @@ static bool build_request(ui_state& state, scan_request& req, std::string& err) 
     req.mem_filter.writable    = state.writable;
     req.mem_filter.executable  = state.executable;
     req.mem_filter.copy_on_write = state.copy_on_write;
+
+    // ★ 扫描区域类型：任一类型勾选即只扫该类型；全不勾 = 扫描全部类型（CE 行为）
+    req.mem_filter.type_filter = 0;
+    if (state.scan_private) req.mem_filter.type_filter |= memory_filter::type_private;
+    if (state.scan_image)   req.mem_filter.type_filter |= memory_filter::type_image;
+    if (state.scan_mapped)  req.mem_filter.type_filter |= memory_filter::type_mapped;
+    if (req.mem_filter.type_filter == 0)
+        req.mem_filter.type_filter = memory_filter::type_private | memory_filter::type_image | memory_filter::type_mapped;
 
     req.not_match = state.not_match;
     req.contain_approximate_value = false;
@@ -188,7 +196,7 @@ void scan_panel::render() {
         const char* preview = (state_.module_selected >= 0 &&
                                state_.module_selected < (int)state_.module_names.size())
                                   ? state_.module_names[state_.module_selected].c_str()
-                                  : "<All Modules>";
+                                  : "<全部模块>";
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
         if (ImGui::BeginCombo("##module_combo", preview)) {
             for (int i = 0; i < (int)state_.module_names.size(); ++i) {
@@ -203,7 +211,7 @@ void scan_panel::render() {
         ImGui::Separator();
     }
 
-    if (ImGui::Button("First Scan")) {
+    if (ImGui::Button("首次扫描")) {
         if (attached && !scanning) {
             state_.scan_mode = scan_mode::first;
             scan_request req;
@@ -217,7 +225,7 @@ void scan_panel::render() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Next Scan")) {
+    if (ImGui::Button("再次扫描")) {
         if (attached && !scanning && can_next) {
             state_.scan_mode = scan_mode::next;
             scan_request req;
@@ -227,12 +235,12 @@ void scan_panel::render() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Undo Scan")) {
+    if (ImGui::Button("撤销扫描")) {
         if (!scanning && svc.has_previous_results())
             svc.restore_previous_results();
     }
     ImGui::SameLine();
-    if (ImGui::Button("New Scan")) {
+    if (ImGui::Button("新扫描")) {
         if (!scanning) {
             svc.clear();
             state_.first_scan_done = false;
@@ -246,26 +254,26 @@ void scan_panel::render() {
 
     ImGui::Spacing();
 
-    ImGui::Checkbox("Hex", &state_.hex);
+    ImGui::Checkbox("十六进制", &state_.hex);
     ImGui::SameLine();
-    ImGui::InputText("Scan Value", state_.scan_value, IM_ARRAYSIZE(state_.scan_value),
+    ImGui::InputText("扫描值", state_.scan_value, IM_ARRAYSIZE(state_.scan_value),
                      ImGuiInputTextFlags_EnterReturnsTrue);
 
     struct data_type_entry { scan_data_type type; const char* label; };
     static const data_type_entry k_data_types[] = {
-        { scan_data_type::bit,         "Bit" },
-        { scan_data_type::int8,        "Byte" },
-        { scan_data_type::int16,       "2 Bytes" },
-        { scan_data_type::int32,       "4 Bytes" },
-        { scan_data_type::int64,       "8 Bytes" },
-        { scan_data_type::float32,     "Float" },
-        { scan_data_type::float64,     "Double" },
-        { scan_data_type::ascii_string, "String (Ascii)" },
-        { scan_data_type::utf8_string,  "String (UTF-8)" },
-        { scan_data_type::utf16_string, "String (UTF-16)" },
-        { scan_data_type::byte_array,   "Array of Byte" },
-        { scan_data_type::all,         "All" },
-        { scan_data_type::structure,   "Structure" },
+        { scan_data_type::bit,         "位" },
+        { scan_data_type::int8,        "字节" },
+        { scan_data_type::int16,       "2 字节" },
+        { scan_data_type::int32,       "4 字节" },
+        { scan_data_type::int64,       "8 字节" },
+        { scan_data_type::float32,     "单精度浮点数" },
+        { scan_data_type::float64,     "双精度浮点数" },
+        { scan_data_type::ascii_string, "字符串 (ASCII)" },
+        { scan_data_type::utf8_string,  "字符串 (UTF-8)" },
+        { scan_data_type::utf16_string, "字符串 (UTF-16)" },
+        { scan_data_type::byte_array,   "字节数组 (AOB)" },
+        { scan_data_type::all,         "全部数据类型" },
+        { scan_data_type::structure,   "结构体" },
     };
     const char* dt_labels[IM_ARRAYSIZE(k_data_types)];
     for (int i = 0; i < IM_ARRAYSIZE(k_data_types); ++i) dt_labels[i] = k_data_types[i].label;
@@ -273,7 +281,7 @@ void scan_panel::render() {
     int dt_idx = 0;
     for (int i = 0; i < IM_ARRAYSIZE(k_data_types); ++i)
         if (k_data_types[i].type == state_.data_type_) { dt_idx = i; break; }
-    ImGui::Combo("Value Type", &dt_idx, dt_labels, IM_ARRAYSIZE(dt_labels));
+    ImGui::Combo("数值类型", &dt_idx, dt_labels, IM_ARRAYSIZE(dt_labels));
     state_.data_type_ = k_data_types[dt_idx].type;
 
     // ★ 只按"当前按钮语义"决定列表：First Scan → 首次条件；Next Scan → 再次条件。
@@ -283,60 +291,70 @@ void scan_panel::render() {
     if (first_list) {
         // CE 首次扫描的 5 个条件
         static const struct { scan_type t; const char* label; } k_ip[] = {
-            { scan_type::exact_value,     "Exact Value" },
-            { scan_type::greater_than,    "Bigger than" },
-            { scan_type::less_than,       "Smaller than" },
-            { scan_type::between,         "Value between" },
-            { scan_type::unknown_initial, "Unknown initial value" },
+            { scan_type::exact_value,     "精确数值" },
+            { scan_type::greater_than,    "大于" },
+            { scan_type::less_than,       "小于" },
+            { scan_type::between,         "介于...之间" },
+            { scan_type::unknown_initial, "未知初始值" },
         };
         const char* labels[IM_ARRAYSIZE(k_ip)];
         for (int i = 0; i < IM_ARRAYSIZE(k_ip); ++i) labels[i] = k_ip[i].label;
         int idx = 0;
         for (int i = 0; i < IM_ARRAYSIZE(k_ip); ++i)
             if (k_ip[i].t == state_.first_scan_type_) { idx = i; break; }
-        ImGui::Combo("Scan Type", &idx, labels, IM_ARRAYSIZE(k_ip));
+        ImGui::Combo("扫描条件", &idx, labels, IM_ARRAYSIZE(k_ip));
         state_.first_scan_type_ = k_ip[idx].t;
     } else {
         // CE 再次扫描条件（顺序对齐 CE：Exact / Increased / Increased by /
         // Decreased / Decreased by / Changed / Unchanged / Bigger / Smaller / Between）
         static const struct { next_scan_type t; const char* label; } k_np[] = {
-            { next_scan_type::equal,                 "Exact Value" },
-            { next_scan_type::increased,             "Increased value" },
-            { next_scan_type::increased_by,          "Increased value by" },
-            { next_scan_type::decreased,             "Decreased value" },
-            { next_scan_type::decreased_by,          "Decreased value by" },
-            { next_scan_type::changed,               "Changed value" },
-            { next_scan_type::unchanged,             "Unchanged value" },
-            { next_scan_type::greater_than,          "Bigger than" },
-            { next_scan_type::less_than,             "Smaller than" },
-            { next_scan_type::between,               "Value between" },
-            { next_scan_type::ignore_value,          "Ignore value" },
-            { next_scan_type::compare_to_first_scan, "Compare to first scan" },
+            { next_scan_type::equal,                 "精确数值" },
+            { next_scan_type::increased,             "增加的数值" },
+            { next_scan_type::increased_by,          "增加了多少" },
+            { next_scan_type::decreased,             "减少的数值" },
+            { next_scan_type::decreased_by,          "减少了多少" },
+            { next_scan_type::changed,               "变化的数值" },
+            { next_scan_type::unchanged,             "未变化的数值" },
+            { next_scan_type::greater_than,          "大于" },
+            { next_scan_type::less_than,             "小于" },
+            { next_scan_type::between,               "介于...之间" },
+            { next_scan_type::ignore_value,          "忽略数值" },
+            { next_scan_type::compare_to_first_scan, "与首次扫描比较" },
         };
         const char* labels[IM_ARRAYSIZE(k_np)];
         for (int i = 0; i < IM_ARRAYSIZE(k_np); ++i) labels[i] = k_np[i].label;
         int idx = 0;
         for (int i = 0; i < IM_ARRAYSIZE(k_np); ++i)
             if (k_np[i].t == state_.next_scan_type_) { idx = i; break; }
-        ImGui::Combo("Scan Type", &idx, labels, IM_ARRAYSIZE(k_np));
+        ImGui::Combo("扫描条件", &idx, labels, IM_ARRAYSIZE(k_np));
         state_.next_scan_type_ = k_np[idx].t;
     }
 
     const bool need_two = first_list ? (state_.first_scan_type_ == scan_type::between)
                                      : (state_.next_scan_type_ == next_scan_type::between);
     if (need_two)
-        ImGui::InputText("Scan Value 2", state_.scan_value2, IM_ARRAYSIZE(state_.scan_value2));
+        ImGui::InputText("扫描值 2", state_.scan_value2, IM_ARRAYSIZE(state_.scan_value2));
 
     if (is_string_type(state_.data_type_)) {
-        ImGui::Checkbox("Case sensitive", &state_.case_sensitive);
+        ImGui::Checkbox("区分大小写", &state_.case_sensitive);
     }
 
-    if (ImGui::CollapsingHeader("Memory Scan Options", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("writable",           &state_.writable);
-        ImGui::Checkbox("executable",         &state_.executable);
-        ImGui::Checkbox("Copy on write",      &state_.copy_on_write);
-        ImGui::Checkbox("Fast Scan",          &state_.fast_scan);
+    if (ImGui::CollapsingHeader("内存扫描选项", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // 扫描区域类型（CE 的"也扫描这些类型的内存区域"）
+        ImGui::TextUnformatted("扫描的内存区域类型:");
+        ImGui::Checkbox("私有内存", &state_.scan_private);
+        ImGui::SameLine();
+        ImGui::Checkbox("映像内存", &state_.scan_image);
+        ImGui::SameLine();
+        ImGui::Checkbox("映射内存", &state_.scan_mapped);
+        ImGui::Checkbox("可写",       &state_.writable);
+        ImGui::SameLine();
+        ImGui::Checkbox("可执行",     &state_.executable);
+        ImGui::SameLine();
+        ImGui::Checkbox("写入时复制", &state_.copy_on_write);
+        ImGui::Checkbox("快速扫描",   &state_.fast_scan);
+        ImGui::SameLine();
         // 首次与再次扫描都支持"非"取反（CE 在两种扫描下都提供 Not 语义）
-        ImGui::Checkbox("Not match",          &state_.not_match);
+        ImGui::Checkbox("非(不匹配)", &state_.not_match);
     }
 }

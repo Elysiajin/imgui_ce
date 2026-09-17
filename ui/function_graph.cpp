@@ -17,13 +17,13 @@ constexpr int      kMaxBlocks = 1200;
 constexpr uint64_t kRange     = 0x8000;   // 跳转目标仍视为函数内的地址窗口
 
 // 布局常量
-constexpr float kColGap = 84.f;   // 列间距（含前向边水平走廊）
-constexpr float kRowGap = 56.f;   // 行间距
+constexpr float kColGap = 84.f;   // 层间距（垂直，含前向边水平走廊）
+constexpr float kRowGap = 56.f;   // 同层块间距（水平）
 constexpr float kPadX   = 8.f;    // 块内边距
 constexpr float kPadY   = 5.f;
 constexpr float kTitlePadY = 4.f;
 constexpr float kLaneH  = 11.f;   // 前向边水平走廊道间距
-constexpr float kLaneW  = 13.f;   // 回边纵向通道间距
+constexpr float kLaneW  = 13.f;   // 回边左侧纵向通道间距
 constexpr float kAnchorStep = 12.f;  // 同一边上多条出/入边的锚点间距
 
 // 主题相关
@@ -475,6 +475,7 @@ static void assign_grid(fg_function& g)
     }
 }
 
+// 垂直布局：col（深度）自上而下分层，row（层内序）自左向右排列
 static void position_blocks(fg_function& g)
 {
     int maxc = 0, maxr = 0;
@@ -482,19 +483,19 @@ static void position_blocks(fg_function& g)
         maxc = std::max(maxc, b.col);
         maxr = std::max(maxr, b.row);
     }
-    std::vector<float> col_w(maxc + 1, 0), row_h(maxr + 1, 0);
+    std::vector<float> col_h(maxc + 1, 0), row_w(maxr + 1, 0);
     for (const auto& b : g.blocks) {
-        col_w[b.col] = std::max(col_w[b.col], b.w);
-        row_h[b.row] = std::max(row_h[b.row], b.h);
+        col_h[b.col] = std::max(col_h[b.col], b.h);
+        row_w[b.row] = std::max(row_w[b.row], b.w);
     }
-    std::vector<float> col_x(maxc + 1, 0), row_y(maxr + 1, 0);
-    float x = 0;
-    for (int c = 0; c <= maxc; ++c) { col_x[c] = x; x += col_w[c] + kColGap; }
+    std::vector<float> col_y(maxc + 1, 0), row_x(maxr + 1, 0);
     float y = 0;
-    for (int r = 0; r <= maxr; ++r) { row_y[r] = y; y += row_h[r] + kRowGap; }
+    for (int c = 0; c <= maxc; ++c) { col_y[c] = y; y += col_h[c] + kColGap; }
+    float x = 0;
+    for (int r = 0; r <= maxr; ++r) { row_x[r] = x; x += row_w[r] + kRowGap; }
     for (auto& b : g.blocks) {
-        b.x = col_x[b.col] + (col_w[b.col] - b.w) * 0.5f;
-        b.y = row_y[b.row];
+        b.x = row_x[b.row] + (row_w[b.row] - b.w) * 0.5f;
+        b.y = col_y[b.col] + (col_h[b.col] - b.h) * 0.5f;
     }
 }
 
@@ -534,7 +535,10 @@ static void route_edges(fg_function& g)
             dx = std::clamp(dx, v.x + 6.f, v.x + v.w - 6.f);
 
             const int ln = lane[{u.col, v.col}]++;
-            const float ymid = std::max(u.y + u.h, v.y) + 12.f + kLaneH * (float)ln;
+            // 水平走廊放在 u 底部与 v 顶部之间的层间隙里，多边按 lane 依次下移
+            const float lo = u.y + u.h + 8.f;
+            const float hi = std::max(lo + 1.f, v.y - 8.f);
+            const float ymid = std::min(lo + kLaneH * (float)ln, hi);
             e.pts = {{sx, u.y + u.h}, {sx, ymid}, {dx, ymid}, {dx, v.y}};
         } else {
             const int ln = lane[{std::min(u.col, v.col), -1}]++;
@@ -613,7 +617,7 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
     if (!open_)
         return;
     ImGui::SetNextWindowSize(ImVec2(940, 660), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Function Graph###function_graph", &open_)) {
+    if (!ImGui::Begin("函数图###function_graph", &open_)) {
         ImGui::End();
         return;
     }
@@ -628,17 +632,17 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
     }
 
     if (!built_) {
-        ImGui::TextDisabled("Cannot build function graph: %s", build_err_.c_str());
+        ImGui::TextDisabled("无法构建函数图: %s", build_err_.c_str());
         ImGui::End();
         return;
     }
 
-    if (ImGui::Button("Fit"))
+    if (ImGui::Button("适应窗口"))
         fit_view();
     ImGui::SameLine();
-    ImGui::TextDisabled("%s  |  %d blocks, %d edges%s", graph_.name.c_str(),
+    ImGui::TextDisabled("%s  |  %d 块, %d 连线%s", graph_.name.c_str(),
                         (int)graph_.blocks.size(), (int)graph_.edges.size(),
-                        graph_.truncated ? "  (truncated)" : "");
+                        graph_.truncated ? "  (已截断)" : "");
 
     ImGui::BeginChild("##fgcanvas", canvas, ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoMove);
@@ -659,31 +663,25 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
         }
     }
 
-    // ---- 命中 / 选择 / 拖动 ----
+    // ---- 命中 / 选择 / 平移 ----
+    // 块位置由布局算法固定，不允许拖动块（边路由是按布局一次性计算的，
+    // 拖块会导致边和块错位）；鼠标按下即平移画布。
     const int hit = hovered ? hit_block(mp, p0) : -1;
     if (hovered) {
         if (ImGui::IsMouseClicked(0)) {
             selected_ = hit;
-            drag_block_ = hit;
-            panning_ = (hit < 0);
+            panning_ = true;
             last_mouse_ = mp;
         }
         if (hit >= 0 && ImGui::IsMouseDoubleClicked(0) && jump_to_disasm)
             jump_to_disasm(graph_.blocks[hit].start);
     }
-    if (ImGui::IsMouseReleased(0)) {
-        drag_block_ = -1;
+    if (ImGui::IsMouseReleased(0))
         panning_ = false;
-    }
-    if (ImGui::IsMouseDown(0) && (drag_block_ >= 0 || panning_)) {
+    if (ImGui::IsMouseDown(0) && panning_) {
         const ImVec2 d(mp.x - last_mouse_.x, mp.y - last_mouse_.y);
-        if (drag_block_ >= 0) {
-            graph_.blocks[drag_block_].x += d.x / zoom_;
-            graph_.blocks[drag_block_].y += d.y / zoom_;
-        } else {
-            scroll_.x -= d.x / zoom_;
-            scroll_.y -= d.y / zoom_;
-        }
+        scroll_.x -= d.x / zoom_;
+        scroll_.y -= d.y / zoom_;
     }
     last_mouse_ = mp;
 
@@ -708,7 +706,10 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
     const float title_h = line_h + kTitlePadY * 2.f;
     const float thickness = std::clamp(1.4f * zoom_, 1.0f, 3.0f);
 
-    // ---- 边（先画，块盖在上面）----
+    // ---- 边（先画，块盖在上面；箭头最后补画，避免被块背景遮住）----
+    struct fg_arrow { ImVec2 tip, t1, t2; ImU32 col; };
+    std::vector<fg_arrow> arrows;
+
     for (const auto& e : graph_.edges) {
         if (e.pts.size() < 2) continue;
         float ex0 = 1e9f, ey0 = 1e9f, ex1 = -1e9f, ey1 = -1e9f;
@@ -734,12 +735,12 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
         const float len = std::sqrt(vx * vx + vy * vy);
         if (len > 0.001f) {
             vx /= len; vy /= len;
-            const float as = 5.5f * std::clamp(zoom_, 0.6f, 1.6f);
+            const float as = 6.5f * std::clamp(zoom_, 0.6f, 1.6f);
             const ImVec2 t1(b.x - vx * as * 2.f - vy * as,
                             b.y - vy * as * 2.f + vx * as);
             const ImVec2 t2(b.x - vx * as * 2.f + vy * as,
                             b.y - vy * as * 2.f - vx * as);
-            dl->AddTriangleFilled(b, t1, t2, col);
+            arrows.push_back({b, t1, t2, col});
         }
     }
 
@@ -786,6 +787,10 @@ void function_graph_window::render(const std::function<void(uint64_t)>& jump_to_
             ty += line_h * zoom_;
         }
     }
+
+    // ---- 箭头（块画完后再画，保证进入块边缘的三角不被块背景覆盖）----
+    for (const auto& a : arrows)
+        dl->AddTriangleFilled(a.tip, a.t1, a.t2, a.col);
 
     ImGui::EndChild();
     ImGui::End();

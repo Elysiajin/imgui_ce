@@ -1,4 +1,4 @@
-﻿#include "address_list_panel.h"
+#include "address_list_panel.h"
 #include "address_value.h"
 #include "app_context.h"
 #include "imgui.h"
@@ -91,12 +91,12 @@ void address_list_panel::commit_edit(address_record* rec) {
 
 // 地址列表类型名（与 value_type 枚举序一致）
 static const char* k_type_names[] = {
-    "Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "Text", "Array of Byte"
+    "字节", "2 字节", "4 字节", "8 字节", "单精度浮点数", "双精度浮点数", "文本", "字节数组"
 };
 static_assert(IM_ARRAYSIZE(k_type_names) == 8);
 
 // 进制显示名（与 value_radix 枚举序一致）
-static const char* k_radix_names[] = { "Decimal", "Hex", "Octal" };
+static const char* k_radix_names[] = { "十进制", "十六进制", "八进制" };
 static_assert(IM_ARRAYSIZE(k_radix_names) == 3);
 
 void address_list_panel::render() {
@@ -116,11 +116,11 @@ void address_list_panel::render() {
         if (ImGui::BeginTable("##addr_table", 5,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY |
                               ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
-            ImGui::TableSetupColumn("Active");
-            ImGui::TableSetupColumn("Description");
-            ImGui::TableSetupColumn("Address");
-            ImGui::TableSetupColumn("Type");
-            ImGui::TableSetupColumn("Value");
+            ImGui::TableSetupColumn("冻结");
+            ImGui::TableSetupColumn("描述");
+            ImGui::TableSetupColumn("地址");
+            ImGui::TableSetupColumn("类型");
+            ImGui::TableSetupColumn("数值");
             ImGui::TableHeadersRow();
 
     for (auto& r : records_) {
@@ -228,11 +228,11 @@ void address_list_panel::render() {
     // ---- 数据行右键菜单 ----
     if (ImGui::BeginPopupEx(row_menu_id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
         if (address_record* rec = find_record(selected_row_id_)) {
-            if (ImGui::MenuItem("Freeze", nullptr, &rec->frozen)) {
+            if (ImGui::MenuItem("冻结", nullptr, &rec->frozen)) {
                 // TODO: 真正执行写冻结值
             }
-            // 进制显示子菜单：Decimal / Hex / Octal（对应需求"自定义进制显示"）
-            if (ImGui::BeginMenu("Display as")) {
+            // 进制显示子菜单：十进制 / 十六进制 / 八进制（对应需求"自定义进制显示"）
+            if (ImGui::BeginMenu("显示为")) {
                 int r_idx = static_cast<int>(rec->radix);
                 if (r_idx < 0 || r_idx >= (int)IM_ARRAYSIZE(k_radix_names)) r_idx = 0;
                 for (int i = 0; i < (int)IM_ARRAYSIZE(k_radix_names); ++i) {
@@ -247,25 +247,25 @@ void address_list_panel::render() {
                 ImGui::EndMenu();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("View in dump")) {
+            if (ImGui::MenuItem("在转储中查看")) {
                 application_context::instance().open_memory_viewer.emit(
                     memory_viewer_mode::hexdump, rec->real_address);
             }
-            if (ImGui::MenuItem("View in disassembly")) {
+            if (ImGui::MenuItem("在反汇编中查看")) {
                 application_context::instance().open_memory_viewer.emit(
                     memory_viewer_mode::disassembly, rec->real_address);
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Modify")) {
+            if (ImGui::MenuItem("修改")) {
                 edit_col_ = 4;
                 begin_edit(rec->id, rec->value);
             }
-            if (ImGui::MenuItem("Edit Description")) {
+            if (ImGui::MenuItem("编辑描述")) {
                 edit_col_ = 1;
                 begin_edit(rec->id, rec->description);
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Delete")) {
+            if (ImGui::MenuItem("删除")) {
                 pending_delete_id_ = rec->id;   // 行循环内不直接删除，见循环结束后的清理
             }
         }

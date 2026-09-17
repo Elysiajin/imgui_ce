@@ -1,4 +1,4 @@
-﻿#include "file_browser.h"
+#include "file_browser.h"
 
 #include <cstring>
 #include <cstdio>
@@ -169,7 +169,7 @@ void file_browser::render() {
     const float list_avail = ImGui::GetContentRegionAvail().y;
 
     // ── 顶部：面包屑导航（每段可点击跳到对应目录）+ 刷新 ──
-    if (ImGui::Button("refresh")) refresh();
+    if (ImGui::Button("刷新")) refresh();
 
     // 面包屑：从根路径到当前路径，逐段渲染可点击按钮。
     ImGui::SameLine();
@@ -191,7 +191,7 @@ void file_browser::render() {
 
     // ── 过滤器栏 ──
     ImGui::SetNextItemWidth(avail_w * 0.30f);
-    if (ImGui::InputTextWithHint("##filter", "Filter ext (e.g. dll,exe)", filter_buf_, sizeof filter_buf_)) {
+    if (ImGui::InputTextWithHint("##filter", "过滤扩展名 (例如 dll,exe)", filter_buf_, sizeof filter_buf_)) {
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             filter_ = filter_buf_;
             for (auto& c : filter_) c = (char)tolower((unsigned char)c);
@@ -199,7 +199,7 @@ void file_browser::render() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Checkbox("Show hidden", &show_hidden_)) refresh();
+    if (ImGui::Checkbox("显示隐藏文件", &show_hidden_)) refresh();
 
     ImGui::Separator();
 
@@ -218,10 +218,10 @@ void file_browser::render() {
     if (ImGui::BeginTable("##fitems", 4,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
                           ImGuiTableFlags_Borders | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
-        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.60f);
-        ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 60);
-        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 80);
-        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_WidthFixed, 130);
+        ImGui::TableSetupColumn("名称", ImGuiTableColumnFlags_WidthStretch, 0.60f);
+        ImGui::TableSetupColumn("类型", ImGuiTableColumnFlags_WidthFixed, 60);
+        ImGui::TableSetupColumn("大小", ImGuiTableColumnFlags_WidthFixed, 80);
+        ImGui::TableSetupColumn("修改时间", ImGuiTableColumnFlags_WidthFixed, 130);
         ImGui::TableHeadersRow();
 
         for (auto& item : items_) {
@@ -230,7 +230,7 @@ void file_browser::render() {
 
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            std::string label = (item.is_directory ? "[Dir] " : "[File] ") + item.display_name;
+            std::string label = (item.is_directory ? "[目录] " : "[文件] ") + item.display_name;
             bool is_selected = (item.path == selected_path_);
             ImGui::PushID(label.c_str());
             if (ImGui::Selectable(label.c_str(), is_selected, ImGuiSelectableFlags_SpanAllColumns)) {
@@ -248,7 +248,7 @@ void file_browser::render() {
             ImGui::PopID();
 
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(item.is_directory ? "Folder" : "File");
+            ImGui::TextUnformatted(item.is_directory ? "文件夹" : "文件");
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(item.is_directory ? "-" : format_size(item.size).c_str());
             ImGui::TableSetColumnIndex(3);
@@ -257,7 +257,7 @@ void file_browser::render() {
         if (!any_match) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextDisabled("(empty or no matching files)");
+            ImGui::TextDisabled("(空或没有匹配的文件)");
         }
         ImGui::EndTable();
         if (!pending_nav.empty()) navigate(pending_nav);
@@ -268,24 +268,24 @@ void file_browser::render() {
     // ── right-hand info panel ──
     ImGui::SameLine();
     ImGui::BeginChild("##finfo", ImVec2(info_w, list_avail), ImGuiChildFlags_Borders);
-    ImGui::TextUnformatted("File info");
+    ImGui::TextUnformatted("文件信息");
     ImGui::Separator();
     if (!has_selection()) {
-        ImGui::TextDisabled("(nothing selected)");
+        ImGui::TextDisabled("(未选择)");
     } else {
         auto sel_it = std::find_if(items_.begin(), items_.end(),
                                    [&](const file_item& i){ return i.path == selected_path_; });
         if (sel_it == items_.end()) {
-            ImGui::TextUnformatted("(file is not in the current dir or was filtered)");
+            ImGui::TextUnformatted("(文件不在当前目录或已被过滤)");
         } else {
             const file_item& sel = *sel_it;
-            ImGui::Text("Name: %s", sel.display_name.c_str());
-            ImGui::Text("Kind: %s", sel.is_directory ? "Folder" : "File");
-            ImGui::Text("Size: %s", sel.is_directory ? "-" : format_size(sel.size).c_str());
-            ImGui::TextWrapped("Path:\n%s", path_to_string(sel.path).c_str());
-            ImGui::Text("Modified: %s", sel.last_write_time.c_str());
-            if (sel.is_readonly) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Attr: read-only");
-            else                 ImGui::Text("Attr: normal");
+            ImGui::Text("名称: %s", sel.display_name.c_str());
+            ImGui::Text("类型: %s", sel.is_directory ? "文件夹" : "文件");
+            ImGui::Text("大小: %s", sel.is_directory ? "-" : format_size(sel.size).c_str());
+            ImGui::TextWrapped("路径:\n%s", path_to_string(sel.path).c_str());
+            ImGui::Text("修改时间: %s", sel.last_write_time.c_str());
+            if (sel.is_readonly) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "属性: 只读");
+            else                 ImGui::Text("属性: 正常");
         }
     }
     ImGui::EndChild();

@@ -505,6 +505,96 @@ public:
     }
 
     /**
+     * @brief 两缓冲"差值等于常量"比较（CE 的 increased_by / decreased_by 语义）
+     *        cur == prev + delta   (decrement=false)
+     *        cur == prev - delta   (decrement=true)
+     * 整数做同宽取模运算（与 CE 标量 `old +/- value` 溢出行为一致）；浮点用精确相等。
+     */
+    template<typename ScalarType>
+    static void compare_two_memory_blocks_diff_eq(
+        const uint8_t* cur, const uint8_t* prev,
+        size_t mem_size, uint64_t base_address, size_t alignment,
+        ScalarType delta, bool decrement,
+        std::vector<uint64_t>& out)
+    {
+        const size_t W = 32;
+        const size_t ss = sizeof(ScalarType);
+        const size_t eff = (alignment > 0) ? alignment : ss;
+
+        for (size_t off = 0; off + W <= mem_size; off += W) {
+            __m256i c = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(cur + off));
+            __m256i p = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(prev + off));
+            uint32_t mb = 0;
+
+            if constexpr (std::is_same_v<ScalarType, float>) {
+                __m256 fc = _mm256_castsi256_ps(c), fp = _mm256_castsi256_ps(p);
+                __m256 t = decrement ? _mm256_sub_ps(fp, _mm256_set1_ps(delta))
+                                     : _mm256_add_ps(fp, _mm256_set1_ps(delta));
+                mb = expand_f32_mask(_mm256_movemask_ps(_mm256_cmp_ps(fc, t, _CMP_EQ_OQ)), SimdOp::equal);
+            }
+            else if constexpr (std::is_same_v<ScalarType, double>) {
+                __m256d fc = _mm256_castsi256_pd(c), fp = _mm256_castsi256_pd(p);
+                __m256d t = decrement ? _mm256_sub_pd(fp, _mm256_set1_pd(delta))
+                                      : _mm256_add_pd(fp, _mm256_set1_pd(delta));
+                mb = expand_f64_mask(_mm256_movemask_pd(_mm256_cmp_pd(fc, t, _CMP_EQ_OQ)), SimdOp::equal);
+            }
+            else {
+                __m256i d, t;
+                if constexpr (sizeof(ScalarType) == 1) {
+                    d = _mm256_set1_epi8(static_cast<int8_t>(delta));
+                    t = decrement ? _mm256_sub_epi8(p, d) : _mm256_add_epi8(p, d);
+                } else if constexpr (sizeof(ScalarType) == 2) {
+                    d = _mm256_set1_epi16(static_cast<int16_t>(delta));
+                    t = decrement ? _mm256_sub_epi16(p, d) : _mm256_add_epi16(p, d);
+                } else if constexpr (sizeof(ScalarType) == 4) {
+                    d = _mm256_set1_epi32(static_cast<int32_t>(delta));
+                    t = decrement ? _mm256_sub_epi32(p, d) : _mm256_add_epi32(p, d);
+                } else {
+                    d = _mm256_set1_epi64x(static_cast<int64_t>(delta));
+                    t = decrement ? _mm256_sub_epi64(p, d) : _mm256_add_epi64(p, d);
+                }
+                mb = expand_mask_by_type(
+                    simd_kernel<ScalarType>::compare_integers(c, t, SimdOp::equal), ss, SimdOp::equal);
+            }
+
+            if (mb != 0) {
+                const size_t inner_step = (eff >= ss) ? ss : eff;
+                for (size_t b = 0; b + ss <= W; b += inner_step) {
+                    uint64_t addr = base_address + off + b;
+                    if (addr % eff != 0) continue;
+                    if (eff >= ss) {
+                        constexpr size_t bpe = std::is_floating_point_v<ScalarType> ? 1 : ss;
+                        uint32_t em = (1u << bpe) - 1u;
+                        uint32_t sh = std::is_floating_point_v<ScalarType>
+                            ? static_cast<uint32_t>(b / ss) : static_cast<uint32_t>(b);
+                        if (((mb >> sh) & em) == em)
+                            out.push_back(addr);
+                    } else {
+                        // 非对齐路径（关闭快速扫描 / 按字节遍历）→ 逐元素标量
+                        ScalarType cv; std::memcpy(&cv, cur + off + b, ss);
+                        ScalarType pv; std::memcpy(&pv, prev + off + b, ss);
+                        ScalarType target = decrement ? static_cast<ScalarType>(pv - delta)
+                                                      : static_cast<ScalarType>(pv + delta);
+                        if (cv == target) out.push_back(addr);
+                    }
+                }
+            }
+        }
+
+        size_t s = (mem_size / W) * W;
+        const size_t tstep = (eff >= ss) ? ss : eff;
+        for (size_t b = s; b + ss <= mem_size; b += tstep) {
+            uint64_t addr = base_address + b;
+            if (addr % eff != 0) continue;
+            ScalarType cv; std::memcpy(&cv, cur + b, ss);
+            ScalarType pv; std::memcpy(&pv, prev + b, ss);
+            ScalarType target = decrement ? static_cast<ScalarType>(pv - delta)
+                                          : static_cast<ScalarType>(pv + delta);
+            if (cv == target) out.push_back(addr);
+        }
+    }
+
+    /**
      * @brief 快速查找某个字节值在内存中所有出现的位置
      */
     static void find_first_char(

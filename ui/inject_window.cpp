@@ -31,7 +31,7 @@ namespace
 
 inject_window::inject_window() {
     browser_.set_filter("dll");
-    method_names_ = { "Remote thread (LoadLibrary)", "Reflective", "APC", "Context" };
+    method_names_ = { "远程线程 (LoadLibrary)", "反射注入", "APC 注入", "上下文注入" };
     refresh_processes();
 }
 
@@ -69,20 +69,20 @@ void inject_window::refresh_processes() {
 void inject_window::do_inject() {
     auto& pm = process_manager::instance();
     if (!pm.is_attached()) {
-        log("Attach a process first (Open Process)");
+        log("请先附加进程(打开进程)");
         return;
     }
     if (attached_pid_ != pm.attached_pid()) refresh_processes(); // 进程可能变化，重取一次
     if (selected_proc_ < 0 || selected_proc_ >= (int)procs_.size()) {
-        log("No process selected");
+        log("未选择进程");
         return;
     }
     if (!is_process_64(attached_pid_)) {
-        log("Cannot inject into a 32-bit process (64-bit only)");
+        log("无法注入 32 位进程(仅支持 64 位)");
         return;
     }
     if (!browser_.has_selection() || !browser_.selected_path().has_extension()) {
-        log("No DLL selected");
+        log("未选择 DLL");
         return;
     }
     ProcessInfo& proc = procs_[selected_proc_];
@@ -99,31 +99,31 @@ void inject_window::do_inject() {
     case 3: ok = XInject::Injector::contextInject(pid, 0, dll);    break;
     default: ok = false; break;
     }
-    snprintf(buf, sizeof buf, "[inject pid=%lu %s] %s", (unsigned long)pid,
-             method_names_[method_].c_str(), ok ? "OK" : "FAILED");
+    snprintf(buf, sizeof buf, "[注入 pid=%lu %s] %s", (unsigned long)pid,
+             method_names_[method_].c_str(), ok ? "成功" : "失败");
     log(buf);
 }
 
 void inject_window::do_unload() {
     auto& pm = process_manager::instance();
     if (!pm.is_attached()) {
-        log("Attach a process first (Open Process)");
+        log("请先附加进程(打开进程)");
         return;
     }
     if (attached_pid_ != pm.attached_pid()) refresh_processes();
     if (selected_proc_ < 0 || selected_proc_ >= (int)procs_.size()) {
-        log("No process selected");
+        log("未选择进程");
         return;
     }
     if (unload_name_[0] == 0) {
-        log("Enter a DLL base name to unload (e.g. mydll.dll)");
+        log("请输入要卸载的 DLL 基名(例如 mydll.dll)");
         return;
     }
     DWORD pid = attached_pid_;
     bool ok = XInject::Injector::unInject(pid, unload_name_);
     char buf[256];
-    snprintf(buf, sizeof buf, "[unload pid=%lu %s] %s", (unsigned long)pid,
-             unload_name_, ok ? "OK" : "FAILED");
+    snprintf(buf, sizeof buf, "[卸载 pid=%lu %s] %s", (unsigned long)pid,
+             unload_name_, ok ? "成功" : "失败");
     log(buf);
 }
 
@@ -135,7 +135,7 @@ void inject_window::log(const std::string& line) {
 void inject_window::render() {
     if (!open_) return;
 
-    if (!ImGui::Begin("Inject", &open_, 0)) {
+    if (!ImGui::Begin("注入", &open_, 0)) {
         ImGui::End();
         return;
     }
@@ -150,37 +150,37 @@ void inject_window::render() {
         std::string procname = (selected_proc_ >= 0 && selected_proc_ < (int)procs_.size())
                                    ? ws_to_utf8(procs_[selected_proc_].processName)
                                    : std::string();
-        ImGui::TextUnformatted("Attached process (fixed)");
+        ImGui::TextUnformatted("已锁定附加进程");
         char info[256];
         if (!is_process_64(pm.attached_pid())) {
-            snprintf(info, sizeof info, "%s  (pid=%lu)  [32-bit - injection not supported]",
+            snprintf(info, sizeof info, "%s  (pid=%lu)  [32 位 - 不支持注入]",
                      procname.c_str(), (unsigned long)pm.attached_pid());
             ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s", info);
         } else {
-            snprintf(info, sizeof info, "%s  (pid=%lu)  [64-bit]",
+            snprintf(info, sizeof info, "%s  (pid=%lu)  [64 位]",
                      procname.c_str(), (unsigned long)pm.attached_pid());
             ImGui::TextUnformatted(info);
         }
     } else {
         ImGui::TextColored(ImVec4(1.f, 0.6f, 0.2f, 1.f),
-                           "No process attached. Open a process first (File -> Open Process).");
+                           "未附加进程。请先打开进程(文件 -> 打开进程)。");
     }
 
     ImGui::Separator();
 
     // ── 选择 DLL（文件浏览器，过滤 dll）──
-    ImGui::TextUnformatted("Select a DLL to inject");
+    ImGui::TextUnformatted("选择要注入的 DLL");
     browser_.render();
 
     if (browser_.has_selection()) {
         std::string sel = ws_to_utf8(browser_.selected_path().wstring());
-        ImGui::TextWrapped("Selected: %s", sel.c_str());
+        ImGui::TextWrapped("已选择: %s", sel.c_str());
     }
 
     ImGui::Separator();
 
     // ── 注入方式 ──
-    ImGui::TextUnformatted("Injection method");
+    ImGui::TextUnformatted("注入方式");
     ImGui::SetNextItemWidth(avail * 0.6f);
     if (ImGui::BeginCombo("##m", method_names_[method_].c_str())) {
         for (int i = 0; i < (int)method_names_.size(); ++i)
@@ -189,17 +189,17 @@ void inject_window::render() {
     }
 
     // ── 操作 ──
-    if (ImGui::Button("Inject", ImVec2(120, 0))) do_inject();
+    if (ImGui::Button("注入", ImVec2(120, 0))) do_inject();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(180);
     ImGui::InputText("##unload", unload_name_, sizeof unload_name_);
     ImGui::SameLine();
-    if (ImGui::Button("Unload", ImVec2(100, 0))) do_unload();
+    if (ImGui::Button("卸载", ImVec2(100, 0))) do_unload();
 
     ImGui::Separator();
 
     // ── 状态日志 ──
-    ImGui::TextUnformatted("Log");
+    ImGui::TextUnformatted("日志");
     ImGui::BeginChild("##injectlog", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::TextWrapped("%s", log_text_.c_str());
     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);

@@ -410,7 +410,7 @@ std::string memory_window::disasm_comment_for(const disasm_line& ln) const
 
 void memory_window::render_disasm_toolbar()
 {
-    ImGui::Checkbox("Symbols", &disasm_show_symbols_);
+    ImGui::Checkbox("符号", &disasm_show_symbols_);
 
     ImGui::SameLine();
     // 跳转回退（CE 的 Back 菜单项）：仅当有历史时可用。
@@ -418,14 +418,14 @@ void memory_window::render_disasm_toolbar()
     // 否则点击 Back 后 has_back 在同一帧内翻转（1→0），会导致 EndDisabled 多调一次。
     const bool has_back = disasm_has_back();
     ImGui::BeginDisabled(!has_back);
-    if (ImGui::Button("Back")) {
+    if (ImGui::Button("后退")) {
         disasm_go_back();
     }
     ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(190);
-    if (ImGui::InputTextWithHint("##disasm_goto", "Goto address (hex), Enter",
+    if (ImGui::InputTextWithHint("##disasm_goto", "转到地址 (十六进制), 回车",
                                  disasm_goto_buf_, sizeof(disasm_goto_buf_),
                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
         uint64_t a = 0;
@@ -436,13 +436,13 @@ void memory_window::render_disasm_toolbar()
     // 跳转箭头类型开关（带颜色图例）
     ImVec4 c_jcc, c_jmp, c_call;
     arrow_palette(c_jcc, c_jmp, c_call);
-    arrow_toggle("Jcc", c_jcc, &disasm_show_jcc_);
-    arrow_toggle("Jmp", c_jmp, &disasm_show_jmp_);
-    arrow_toggle("Call", c_call, &disasm_show_call_, false);
+    arrow_toggle("条件跳转", c_jcc, &disasm_show_jcc_);
+    arrow_toggle("跳转", c_jmp, &disasm_show_jmp_);
+    arrow_toggle("调用", c_call, &disasm_show_call_, false);
 
     // 函数控制流图（Ghidra Function Graph 风格）
     ImGui::SameLine();
-    if (ImGui::Button("Graph")) {
+    if (ImGui::Button("函数图")) {
         graph_.open_at(disasm_selected_ ? disasm_selected_ : disasm_base_);
     }
 }
@@ -559,12 +559,12 @@ void memory_window::render_disassembly_view() {
                 : ImGui::ColorConvertFloat4ToU32(ImVec4(0.45f, 0.45f, 0.45f, 0.6f)));
         ImGui::Dummy(ImVec2(13.f, 0.f));
         ImGui::SameLine(0.f, 1.f);
-        ImGui::TextUnformatted(disasm_hl_mode_ ? "H: click instr/reg to highlight  (Esc off)"
-                                               : "H: highlight mode  (H to enter)");
+        ImGui::TextUnformatted(disasm_hl_mode_ ? "H: 点击指令/寄存器高亮  (Esc 退出)"
+                                               : "H: 高亮模式  (按 H 进入)");
         if (disasm_hl_mode_ && ImGui::IsKeyPressed(ImGuiKey_Escape))
             disasm_hl_mode_ = false;
         ImGui::SameLine(0.f, 24.f);
-        if (ImGui::Button("Clear HL")) {
+        if (ImGui::Button("清除高亮")) {
             hl_instructions_.clear();
             hl_reg_words_.clear();
         }
@@ -651,22 +651,22 @@ void memory_window::render_disassembly_view() {
             if (!s.empty())
                 addr_col_w = std::max(addr_col_w, ImGui::CalcTextSize(s.c_str()).x + 12.f);
         addr_col_w = std::min(addr_col_w, ImGui::GetWindowWidth() * 0.45f);
-        ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed,
+        ImGui::TableSetupColumn("地址", ImGuiTableColumnFlags_WidthFixed,
                                 addr_col_w);
-        ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed,
+        ImGui::TableSetupColumn("字节", ImGuiTableColumnFlags_WidthFixed,
                                 ImGui::CalcTextSize("00 00 00 00 00 00 00 00 00 00 00 00 00 00 00").x + 10.f);
-        ImGui::TableSetupColumn("Instruction", ImGuiTableColumnFlags_WidthStretch, 2.0f);
-        ImGui::TableSetupColumn("Comment", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("指令", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableSetupColumn("注释", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableHeadersRow();
 
         if (arch == process_arch::unknown) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextDisabled("No process attached.");
+            ImGui::TextDisabled("未附加进程");
         } else if (disasm_lines_.empty()) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextDisabled("Unable to disassemble @ %016llX",
+            ImGui::TextDisabled("无法在此地址反汇编 @ %016llX",
                                 (unsigned long long)state_.disasm_view_address);
         } else {
             std::vector<float> row_tops;
@@ -703,16 +703,16 @@ void memory_window::render_disassembly_view() {
                 }
                 if (ImGui::BeginPopupContextItem("##disasm_line")) {
                     if (ln.is_branch && ln.branch_target &&
-                        ImGui::MenuItem("Follow")) {
+                        ImGui::MenuItem("跟随")) {
                         disasm_jump_to(ln.branch_target);
                     }
-                    if (ImGui::MenuItem("Follow in dump")) {
+                    if (ImGui::MenuItem("在 Dump 中跟随")) {
                         state_.dump_view_address = ln.address;
                     }
-                    if (ImGui::MenuItem("Function graph")) {
+                    if (ImGui::MenuItem("函数图")) {
                         graph_.open_at(ln.address);
                     }
-                    if (ImGui::MenuItem("Copy address")) {
+                    if (ImGui::MenuItem("复制地址")) {
                         ImGui::SetClipboardText(abuf);
                     }
                     ImGui::EndPopup();
@@ -1006,32 +1006,32 @@ void memory_window::render() {
     inject_window_.render();
     graph_.render([this](uint64_t a) { disasm_jump_to(a); });
 
-    if (!ImGui::Begin("Memory Viewer", &state_.show_memory_window, ImGuiWindowFlags_MenuBar)) {
+    if (!ImGui::Begin("内存浏览器", &state_.show_memory_window, ImGuiWindowFlags_MenuBar)) {
         ImGui::End();
         return;
     }
 
     if (ImGui::BeginMenuBar()) {
-        if (ImGui::BeginMenu("Tools")) {
-            if (ImGui::MenuItem("Inject")) {
+        if (ImGui::BeginMenu("工具")) {
+            if (ImGui::MenuItem("注入")) {
                 inject_window_.open();
             }
-            if (ImGui::MenuItem("Alloc Memory")) {
+            if (ImGui::MenuItem("分配内存")) {
                 // TODO
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Auto assembly")) {
+            if (ImGui::MenuItem("自动汇编")) {
                 state_.show_assembler_window = true;
             }
             ImGui::EndMenu();
         }
 
-        if(ImGui::BeginMenu("View Map")){
-            if(ImGui::MenuItem("Detail View")){
+        if(ImGui::BeginMenu("视图映射")){
+            if(ImGui::MenuItem("详细信息视图")){
                 state_.show_process_detail = true;
             }
 
-            if(ImGui::MenuItem("PE Analyzer")){
+            if(ImGui::MenuItem("PE 分析器")){
 
             }
             ImGui::EndMenu();
@@ -1048,7 +1048,7 @@ void memory_window::render() {
     if (ImGui::BeginTabBar("##dump_tabs")) {
         for (int i = 1; i <= 5; ++i) {
             char buf[32];
-            snprintf(buf, sizeof(buf), "Hex Dump %d", i);
+            snprintf(buf, sizeof(buf), "十六进制转储 %d", i);
             if (ImGui::BeginTabItem(buf)) {
                 hex_view_.render();
                 ImGui::EndTabItem();

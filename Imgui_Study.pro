@@ -9,11 +9,13 @@ DEFINES += ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD
 
 QMAKE_CXXFLAGS += -mavx2 -mbmi2
 
-INCLUDEPATH += $$PWD $$PWD/libs $$PWD/libs/Imgui $$PWD/ui $$PWD/core $$PWD/scan $$PWD/type
+INCLUDEPATH += $$PWD $$PWD/libs $$PWD/libs/Imgui $$PWD/ui $$PWD/core $$PWD/scan $$PWD/type $$PWD/asm
 INCLUDEPATH += $$PWD/libs/Zydis/include $$PWD/libs/Zydis/src $$PWD/libs/Zycore/include
 INCLUDEPATH += $$PWD/libs/S_inject
 
 SOURCES += \
+    asm/asm_parser.cpp \
+    asm/asm_highlight.cpp \
     core/process_manager.cpp \
     core/win32_memory_accessor.cpp \
     core/win32_memory_region_enumerator.cpp \
@@ -102,6 +104,8 @@ LIBS += -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -ldwmapi -lshell32
 LIBS += -lntdll -lwininet -lbcrypt -ladvapi32 -lpsapi -lws2_32 -lcrypt32
 
 HEADERS += \
+    asm/asm_parser.h \
+    asm/asm_highlight.h \
     core/imemory_accessor.h \
     core/imemory_region_enumerator.h \
     core/imodule_enumerator.h \

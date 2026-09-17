@@ -1,4 +1,4 @@
-﻿#include "process_list_window.h"
+#include "process_list_window.h"
 #include "imgui.h"
 #include "ui/process_icon_cache.h"
 #include "core/process_manager.h"
@@ -22,18 +22,18 @@ void process_list_window::render() {
         last_refresh_ = now;
     }
 
-    if (ImGui::Begin("Process Window", &state_.show_process_window, ImGuiWindowFlags_NoCollapse)) {
-        ImGui::InputText("Filter", filter_buf_, IM_ARRAYSIZE(filter_buf_));
+    if (ImGui::Begin("进程窗口", &state_.show_process_window, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::InputText("过滤", filter_buf_, IM_ARRAYSIZE(filter_buf_));
 
         ImGui::Separator();
 
         if (ImGui::BeginTable("Process Tab", 4,
             ImGuiTableFlags_ScrollY | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
 
-            ImGui::TableSetupColumn("Pid");
-            ImGui::TableSetupColumn("Name");
-            ImGui::TableSetupColumn("Ppid", ImGuiTableColumnFlags_WidthFixed, 80.f);
-            ImGui::TableSetupColumn("Threads", ImGuiTableColumnFlags_WidthFixed, 80.f);
+            ImGui::TableSetupColumn("PID");
+            ImGui::TableSetupColumn("名称");
+            ImGui::TableSetupColumn("PPID", ImGuiTableColumnFlags_WidthFixed, 80.f);
+            ImGui::TableSetupColumn("线程数", ImGuiTableColumnFlags_WidthFixed, 80.f);
 
             ImGui::TableHeadersRow();
 
@@ -77,19 +77,19 @@ void process_list_window::render() {
                     selected_pid_ = static_cast<int>(p.pid);
 
                 if (ImGui::BeginPopupContextItem("ProcessContextMenu")) {
-                    if (ImGui::MenuItem("Attach")) {
+                    if (ImGui::MenuItem("附加")) {
                         pm.attach(p.pid);
                         state_.modules_loaded = false;
                         state_.show_process_window = false;
                     }
-                    if (ImGui::MenuItem("Look for detail")) {
+                    if (ImGui::MenuItem("查看详细信息")) {
                         pm.attach(p.pid);
                         state_.modules_loaded = false;
                         state_.show_process_detail = true;
                         state_.show_process_window = false;
                     }
                     ImGui::Separator();
-                    if (ImGui::MenuItem("Terminate Process")) {
+                    if (ImGui::MenuItem("结束进程")) {
                         if(!process_manager::terminate_process(p.pid)){
                             // ImGui::OpenPopup("Terminater Error");
                             error_window_ = true;
@@ -124,8 +124,8 @@ void process_list_window::render() {
         }
 
         if(ImGui::BeginPopupModal("Terminater Error", &error_window_, ImGuiWindowFlags_AlwaysAutoResize)){
-            ImGui::TextUnformatted("Terminate Process Failed!");
-            if(ImGui::Button("Close", ImVec2(120, 0))){
+            ImGui::TextUnformatted("终止进程失败!");
+            if(ImGui::Button("关闭", ImVec2(120, 0))){
                 ImGui::CloseCurrentPopup();
                 error_window_ = false;
             }

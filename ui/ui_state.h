@@ -43,7 +43,10 @@ struct ui_state {
     bool       copy_on_write = false;
     bool       fast_scan     = true;
     bool       not_match     = false;
-    bool       include_code  = true;
+    // 扫描区域类型（对应 CE 的"也扫描这些类型的内存区域"；全不勾 = 扫描全部）
+    bool       scan_private  = false;
+    bool       scan_image    = false;
+    bool       scan_mapped   = false;
 
     // 扫描模式选择：首次扫描(First)/再次扫描(Next)的 UI 状态
     scan_mode   scan_mode = scan_mode::first;

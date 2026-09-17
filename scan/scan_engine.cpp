@@ -3,6 +3,7 @@
 #include "scan\thread_pool.h"
 #include "scan\scan_value_target.h"
 #include <cstring>
+#include <unordered_map>
 
 // =============================================================================
 // 辅助函数：将 scan_type / next_scan_type 转换为 SimdOp（用于 All 类型 SIMD 加速）
@@ -104,8 +105,10 @@ static inline bool compare_value_next(T cur, T old, T v1, T v2, next_scan_type n
         case next_scan_type::changed:     match = (cur != old); break;
         case next_scan_type::unchanged:   match = (cur == old); break;
         case next_scan_type::between:     match = (cur >= v1 && cur <= v2); break;
-        case next_scan_type::increased_by: match = (cur >  old + v1); break;
-        case next_scan_type::decreased_by: match = (cur <  old - v1); break;
+        // ★ 修正：CE 的"增加了多少/减少了多少"是"精确等于旧值±增量"，
+        //   而非"大于/小于"。参考 memscan.pas：newvalue == oldvalue(+/-)value。
+        case next_scan_type::increased_by: match = (cur == old + v1); break;
+        case next_scan_type::decreased_by: match = (cur == old - v1); break;
         case next_scan_type::ignore_value: match = true; break;   // 忽略值：保留当前结果
         case next_scan_type::compare_to_first_scan: match = (cur == old); break;
         default: break;
@@ -1066,6 +1069,7 @@ void scan_engine::task_next_scan(const scan_request& request,
 
 	auto* p = std::get_if<value_params>(&request.params);
 	T v1 = 0, v2 = 0;
+	bool float_approx_range = false;   // 浮点近似相等/不等时用 [v1,v2] 区间判定
 	if (p) {
 		if constexpr (std::is_floating_point_v<T>) {
 			T target;
@@ -1073,7 +1077,8 @@ void scan_engine::task_next_scan(const scan_request& request,
 			const bool use_approx = request.contain_approximate_value
 				&& (request.next_type == next_scan_type::equal || request.next_type == next_scan_type::not_equal);
 			if (use_approx) {
-				// ★ 勾选了"包含近似值" → 使用 ±5% 相对容差
+                // ±5% 相对容差
+				float_approx_range = true;
 				constexpr T relative_epsilon = static_cast<T>(0.05); // ±5%
 				T lo = target * (static_cast<T>(1.0) - relative_epsilon);
 				T hi = target * (static_cast<T>(1.0) + relative_epsilon);
@@ -1094,76 +1099,182 @@ void scan_engine::task_next_scan(const scan_request& request,
 		}
 	}
 
-	for (const auto& res : old_batch) {
-		if (m_cancel.load()) break;
+	// ★★★ 性能优化（模糊搜索 CPU 利用率 <50% 的主因）：
+	// 旧实现对每个结果地址都做一次 ReadProcessMemory（live_snapshot->read_data 逐个
+	// 系统调用）+ 一次快照 read_value，数百万地址 = 数百万次 syscall，CPU 大量时间
+	// 阻塞在系统调用/内存延迟上，利用率上不去。
+	// 修复：先把结果地址按升序排序，把地址相近的结果聚成"连续窗口"，每窗口只做
+	// 一次整段读取（当前 + 上一次各一次），再从缓存的字节块里直接取各元素比较。
+	// 典型 unknown_initial 场景下 1 次 RPC 覆盖 ~2048 个地址，syscall 数量骤减，
+	// 计算负载回到 SIMD/标量主循环，CPU 利用率贴近精确扫描。
+	const bool needs_old = need_old_value_for_next_scan(request.next_type);
+	auto* src_snap = (request.next_type == next_scan_type::compare_to_first_scan)
+		? first_snap.get() : previous_snapshot.get();
+	const size_t max_read = sizeof(T);
 
-		// ── 字符串 / 字节数组（仅 T=uint8_t 时编译，直接比较后 continue）──
+	// ★★★ SIMD 快速路径（此前模糊 next-scan 逐地址标量 memcpy+switch，CPU 上不去）：
+	//   仅整数数值、非浮点近似、且为"两缓冲比较 / 差值比较"类条件时启用。
+	//   窗口整段 SIMD 得到候选地址，再与结果集求交（结果集地址正是窗口内子集）。
+	SimdOp simd_op = SimdOp::equal;
+	bool simd_path_diff = false;      // 走 compare_two_memory_blocks_diff_eq
+	bool simd_diff_decrement = false;
+	bool use_simd = false;
+	{
+		const bool numeric = !std::is_floating_point_v<T> &&
+			!(sizeof(T) == 1 && (is_string_type(request.data_type) || is_byte_array_type(request.data_type)));
+		if (numeric && !float_approx_range) {
+			switch (request.next_type) {
+			case next_scan_type::increased:           simd_op = SimdOp::greater;     simd_path_diff = false; use_simd = true; break;
+			case next_scan_type::decreased:           simd_op = SimdOp::less;        simd_path_diff = false; use_simd = true; break;
+			case next_scan_type::changed:             simd_op = SimdOp::not_equal;   simd_path_diff = false; use_simd = true; break;
+			case next_scan_type::unchanged:           simd_op = SimdOp::equal;       simd_path_diff = false; use_simd = true; break;
+			case next_scan_type::compare_to_first_scan: simd_op = SimdOp::equal;     simd_path_diff = false; use_simd = true; break;
+			case next_scan_type::increased_by:        simd_path_diff = true;  simd_diff_decrement = false; use_simd = !request.not_match; break;
+			case next_scan_type::decreased_by:        simd_path_diff = true;  simd_diff_decrement = true;  use_simd = !request.not_match; break;
+			default: use_simd = false; break;
+			}
+			if (use_simd && !simd_path_diff && request.not_match)
+				simd_op = invert_simd_op(simd_op);
+		}
+	}
+
+	// 排序索引（不移动原 batch，避免破坏外部内存布局假设）
+	std::vector<size_t> ord(old_batch.size());
+	for (size_t i = 0; i < ord.size(); ++i) ord[i] = i;
+	std::sort(ord.begin(), ord.end(), [&](size_t a, size_t b) {
+		return old_batch[a].address < old_batch[b].address;
+	});
+
+	// 地址 → 原结果 映射（SIMD 候选归约用）
+	std::unordered_map<uint64_t, scan_result> res_by_addr;
+	res_by_addr.reserve(old_batch.size() * 2);
+	for (const auto& r : old_batch) res_by_addr.emplace(r.address, r);
+
+	// 单地址求值（窗口读与逐地址回退共用）
+	auto eval = [&](uint64_t addr, const uint8_t* curp, const uint8_t* oldp) -> bool {
+		// ── 字符串 / 字节数组：保持逐地址读（模式长度不固定，不适合窗口）──
 		if constexpr (sizeof(T) == 1) {
 			if (is_string_type(request.data_type)) {
-				auto* sp = std::get_if<string_params>(&request.params);
-				if (sp && !sp->text.empty()) {
-					// sp->text.length() 对于 utf16_string 已经是 UTF-16 LE 的字节数
-					size_t len = sp->text.length();
-					std::vector<uint8_t> buf(len);
-					if (current_snapshot->read_data(res.address, buf.data(), len)) {
-						std::vector<uint64_t> matched;
-						perform_string_search(buf, res.address, *sp, request.data_type, matched);
-						if (!matched.empty()) survivors.push_back(res);
+				if (auto* sp = std::get_if<string_params>(&request.params)) {
+					if (sp && !sp->text.empty()) {
+						size_t len = sp->text.length();
+						std::vector<uint8_t> buf(len);
+						if (current_snapshot->read_data(addr, buf.data(), len)) {
+							std::vector<uint64_t> matched;
+							perform_string_search(buf, addr, *sp, request.data_type, matched);
+							return !matched.empty();
+						}
 					}
 				}
-				continue;
+				return false;
 			}
 			if (is_byte_array_type(request.data_type)) {
-				auto* ap = std::get_if<aob_params>(&request.params);
-				if (ap && !ap->pattern.empty()) {
-					std::vector<uint8_t> buf(ap->pattern.size());
-					if (current_snapshot->read_data(res.address, buf.data(), ap->pattern.size())) {
-						std::vector<uint64_t> matched;
-						perform_aob_search(buf, res.address, *ap, matched);
-						if (!matched.empty()) survivors.push_back(res);
+				if (auto* ap = std::get_if<aob_params>(&request.params)) {
+					if (ap && !ap->pattern.empty()) {
+						std::vector<uint8_t> buf(ap->pattern.size());
+						if (current_snapshot->read_data(addr, buf.data(), buf.size())) {
+							std::vector<uint64_t> matched;
+							perform_aob_search(buf, addr, *ap, matched);
+							return !matched.empty();
+						}
 					}
 				}
-				continue;
+				return false;
 			}
 		}
 
-		T cur_val, old_val;
-		if (!current_snapshot->read_value(res.address, cur_val)) continue;
+		T cur_val; std::memcpy(&cur_val, curp, sizeof(T));
+		T old_val = T(0);
+		if (needs_old && oldp) std::memcpy(&old_val, oldp, sizeof(T));
+		const bool have_old = needs_old && oldp != nullptr;
 
-            bool match = false;
-            switch (request.next_type) {
-            case next_scan_type::equal:
-                if constexpr (std::is_floating_point_v<T>) {
-                    // ★ 浮点数 Equal 使用 Epsilon 范围匹配
-                    match = (cur_val >= v1 && cur_val <= v2);
-                } else {
-                    match = (cur_val == v1);
-                }
-                break;
-            case next_scan_type::not_equal:
-                if constexpr (std::is_floating_point_v<T>) {
-                    // ★ 浮点数 not_equal 在范围外
-                    match = (cur_val < v1 || cur_val > v2);
-                } else {
-                    match = (cur_val != v1);
-                }
-                break;
-            case next_scan_type::greater_than: match = (cur_val > v1); break;
-            case next_scan_type::less_than:    match = (cur_val < v1); break;
-            case next_scan_type::increased: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val > old_val); break;
-            case next_scan_type::decreased: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val < old_val); break;
-            case next_scan_type::changed:   if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val != old_val); break;
-            case next_scan_type::unchanged: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val == old_val); break;
-            case next_scan_type::between:   match = (cur_val >= v1 && cur_val <= v2); break;
-            case next_scan_type::increased_by: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val > old_val + v1); break;
-            case next_scan_type::decreased_by: if (previous_snapshot && previous_snapshot->read_value(res.address, old_val)) match = (cur_val < old_val - v1); break;
-            case next_scan_type::ignore_value: match = true; break;   // 忽略值：保留当前结果
-            case next_scan_type::compare_to_first_scan: if (first_snap && first_snap->read_value(res.address, old_val)) match = (cur_val == old_val); break;
-            default: break;
-            }
-		// ★ 勾选了"非" → 反转匹配条件（精确数值反转 → 非精确数值，以此类推）
+		bool match = false;
+		switch (request.next_type) {
+		case next_scan_type::equal:    match = float_approx_range ? (cur_val >= v1 && cur_val <= v2) : (cur_val == v1); break;
+		case next_scan_type::not_equal: match = float_approx_range ? (cur_val < v1 || cur_val > v2) : (cur_val != v1); break;
+		case next_scan_type::greater_than: match = (cur_val > v1); break;
+		case next_scan_type::less_than:    match = (cur_val < v1); break;
+		case next_scan_type::increased:  match = have_old && (cur_val >  old_val); break;
+		case next_scan_type::decreased:  match = have_old && (cur_val <  old_val); break;
+		case next_scan_type::changed:    match = have_old && (cur_val != old_val); break;
+		case next_scan_type::unchanged:  match = have_old && (cur_val == old_val); break;
+		case next_scan_type::between:    match = (cur_val >= v1 && cur_val <= v2); break;
+		// ★ CE 语义：增加了多少 = 精确等于 旧值+增量；减少了多少 = 精确等于 旧值-增量
+		case next_scan_type::increased_by: match = have_old && (cur_val == old_val + v1); break;
+		case next_scan_type::decreased_by: match = have_old && (cur_val == old_val - v1); break;
+		case next_scan_type::ignore_value: match = true; break;
+		case next_scan_type::compare_to_first_scan: match = have_old && (cur_val == old_val); break;
+		default: match = false; break;
+		}
 		if (request.not_match) match = !match;
-		if (match) survivors.push_back(res);
+		return match;
+	};
+
+	// 窗口缓冲（覆盖窗口跨度 + 最大元素尺寸，保证 off+sizeof(T) 不越界）
+	constexpr size_t k_win = 8192;
+	std::vector<uint8_t> cur_buf(k_win + sizeof(T));
+	std::vector<uint8_t> old_buf(k_win + sizeof(T));
+
+	size_t i = 0;
+	while (i < ord.size()) {
+		if (m_cancel.load()) break;
+		const uint64_t base = old_batch[ord[i]].address;
+
+		// 收集窗口内的地址（base 起 k_win 字节跨度的连续地址）
+		size_t j = i;
+		while (j < ord.size() && (old_batch[ord[j]].address - base) < k_win) ++j;
+		const size_t win_len = static_cast<size_t>(old_batch[ord[j - 1]].address - base) + sizeof(T);
+
+		const bool cur_ok = current_snapshot->read_data(base, cur_buf.data(), win_len);
+		const bool old_ok = (!needs_old) || (src_snap && src_snap->read_data(base, old_buf.data(), win_len));
+
+		if (use_simd && cur_ok && old_ok) {
+			// ★ SIMD 整窗比较：一次处理 32 字节，候选地址与结果集求交
+			std::vector<uint64_t> matched;
+			if (simd_path_diff) {
+				simd_scanner::compare_two_memory_blocks_diff_eq<T>(
+					cur_buf.data(), old_buf.data(), win_len, base, request.alignment,
+					v1, simd_diff_decrement, matched);
+			} else {
+				simd_scanner::compare_two_memory_blocks<T>(
+					cur_buf.data(), old_buf.data(), win_len, base, request.alignment,
+					simd_op, matched);
+			}
+			for (uint64_t cand : matched) {
+				auto it = res_by_addr.find(cand);
+				if (it != res_by_addr.end()) {
+					survivors.push_back(it->second);
+					if (survivors.size() >= 4096) { out_cache->push_back_batch(survivors); survivors.clear(); }
+				}
+			}
+		} else {
+			for (size_t k = i; k < j; ++k) {
+				const scan_result& res = old_batch[ord[k]];
+				const size_t off = static_cast<size_t>(res.address - base);
+				if (off + sizeof(T) > win_len) continue;
+
+				bool hit;
+				if (cur_ok && (old_ok || !needs_old)) {
+					hit = eval(res.address, cur_buf.data() + off,
+						needs_old ? (old_buf.data() + off) : nullptr);
+				} else {
+					// 整窗口读失败（跨越不可读页等）→ 该地址单独回退
+					uint8_t c[8] = {}, o[8] = {};
+					if (!current_snapshot->read_data(res.address, c, max_read)) continue;
+					const uint8_t* op = nullptr;
+					if (needs_old) {
+						if (!src_snap || !src_snap->read_data(res.address, o, max_read)) continue;
+						op = o;
+					}
+					hit = eval(res.address, c, op);
+				}
+				if (hit) {
+					survivors.push_back(res);
+					if (survivors.size() >= 4096) { out_cache->push_back_batch(survivors); survivors.clear(); }
+				}
+			}
+		}
+		i = j;
 	}
 	if (!survivors.empty()) out_cache->push_back_batch(survivors);
 	m_progress.fetch_add(static_cast<int>(old_batch.size()));
@@ -1222,12 +1333,13 @@ void scan_engine::task_full_scan_with_next_condition(const scan_request& request
 
 	// ===== 判断走哪条快速路 =====
 	enum class SimdPath {
-		None,                  // 标量回退（increased_by / decreased_by）
-		CompareWithTarget,     // Equal / not_equal → 用 simd_scanner::scan_memory_block_for_matches
-		RangeFilter,           // Between / 浮点近似 Equal/not_equal → 用 scan_memory_block_for_range
-		CompareTwoBuffers      // Changed / Unchanged / Increased / Decreased / compare_to_first_scan
-		                       // → 用 compare_two_memory_blocks
-	};
+			None,                  // 标量回退
+			CompareWithTarget,     // Equal / not_equal → 用 simd_scanner::scan_memory_block_for_matches
+			RangeFilter,           // Between / 浮点近似 Equal/not_equal → 用 scan_memory_block_for_range
+			CompareTwoBuffers,     // Changed / Unchanged / Increased / Decreased / compare_to_first_scan
+			                       // → 用 compare_two_memory_blocks
+			DiffEq                 // increased_by / decreased_by → 用 compare_two_memory_blocks_diff_eq
+		};
 	SimdPath simd_path = SimdPath::None;
 	bool needs_prev_buf = false;
 
@@ -1254,9 +1366,11 @@ void scan_engine::task_full_scan_with_next_condition(const scan_request& request
 	case next_scan_type::increased: simd_path = SimdPath::CompareTwoBuffers; needs_prev_buf = true; break;
 	case next_scan_type::decreased: simd_path = SimdPath::CompareTwoBuffers; needs_prev_buf = true; break;
 	case next_scan_type::compare_to_first_scan: simd_path = SimdPath::CompareTwoBuffers; needs_prev_buf = true; break;
-		// increased_by / decreased_by → SimdPath::None（标量回退，但会整块读取 prev_buf 消除虚拟调用）
-	case next_scan_type::increased_by: simd_path = SimdPath::None; needs_prev_buf = true; break;
-	case next_scan_type::decreased_by: simd_path = SimdPath::None; needs_prev_buf = true; break;
+		// increased_by / decreased_by → 差值 SIMD（勾选"非"时取补逻辑复杂，回退标量）
+		case next_scan_type::increased_by:
+		case next_scan_type::decreased_by:
+			if (!request.not_match) { simd_path = SimdPath::DiffEq; needs_prev_buf = true; }
+			break;
 	default: break;
 	}
 
@@ -1383,15 +1497,30 @@ void scan_engine::task_full_scan_with_next_condition(const scan_request& request
 				mem_buf.data(), prev_buf.data(), to_read, chunk_base, step, op, matched);
 
 			for (auto addr : matched) {
-				batch_results.push_back({ addr });
-				if (batch_results.size() >= 4096) {
-					out_cache->push_back_batch(batch_results);
-					batch_results.clear();
+					batch_results.push_back({ addr });
+					if (batch_results.size() >= 4096) {
+						out_cache->push_back_batch(batch_results);
+						batch_results.clear();
+					}
 				}
 			}
-		}
-		else {
-			// ===== 标量回退（increased_by / decreased_by + 浮点 not_equal 近似）=====
+			else if (simd_path == SimdPath::DiffEq) {
+				// ★ increased_by / decreased_by：cur == prev ± v1，SIMD 差值比较
+				std::vector<uint64_t> matched;
+				simd_scanner::compare_two_memory_blocks_diff_eq<T>(
+					mem_buf.data(), prev_buf.data(),
+					to_read, chunk_base, step,
+					v1, (request.next_type == next_scan_type::decreased_by), matched);
+				for (auto addr : matched) {
+					batch_results.push_back({ addr });
+					if (batch_results.size() >= 4096) {
+						out_cache->push_back_batch(batch_results);
+						batch_results.clear();
+					}
+				}
+			}
+			else {
+				// ===== 标量回退（浮点 not_equal 近似 + 勾选"非"的 _by）=====
 			// 虽然有虚拟调用开销，但 prev_buf 整块预读已消除逐地址调用
 			T placeholder_prev;
 			for (size_t off = 0; off + scalar_size <= to_read; off += step) {
@@ -1421,11 +1550,11 @@ void scan_engine::task_full_scan_with_next_condition(const scan_request& request
 					case next_scan_type::ignore_value: match = true; break;
 					case next_scan_type::increased_by:
 						std::memcpy(&placeholder_prev, prev_buf.data() + off, sizeof(T));
-						match = (cur_val > placeholder_prev + v1);
+						match = (cur_val == placeholder_prev + v1);   // ★ CE：精确等于旧值+增量
 						break;
 					case next_scan_type::decreased_by:
 						std::memcpy(&placeholder_prev, prev_buf.data() + off, sizeof(T));
-						match = (cur_val < placeholder_prev - v1);
+						match = (cur_val == placeholder_prev - v1);   // ★ CE：精确等于旧值-增量
 						break;
 					default:
 						// 安全回退

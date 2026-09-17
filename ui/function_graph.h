@@ -14,7 +14,8 @@
 
 // ── 函数控制流图（对标 Ghidra Function Graph 的精简实现）─────────────
 // 数据流：入口地址 -> CFG 构建（递归下降 + 基本块切分，CE parseFunction 语义）
-//       -> 分层布局（最长路径分层 + 重心排序降交叉，Ghidra flowchart 同思路）
+//       -> 垂直分层布局（流程自上而下；最长路径分层 + 重心排序降交叉，
+//          Ghidra flowchart 同思路）
 //       -> 正交边路由（折线 + 回边走左侧通道）-> ImGui 画布渲染。
 
 // 出边语义：fall = 顺序执行/条件未命中；taken = 条件命中；uncond = 无条件 jmp
@@ -38,7 +39,7 @@ struct fg_block {
     int      edge_taken = -1; uint64_t taken_addr = 0; bool taken_external = false;
     int      edge_jmp = -1;   uint64_t jmp_addr = 0;   bool jmp_external = false;
 
-    // 布局结果（世界坐标；用户拖动直接改 x/y）
+    // 布局结果（世界坐标，由分层布局一次性计算，之后不可改动）
     int col = 0, row = 0;
     float x = 0, y = 0, w = 0, h = 0;
 
@@ -89,7 +90,7 @@ private:
     int insn_count_ = 0;
 };
 
-// 函数图窗口（独立 ImGui 窗口；交互：拖拽平移/滚轮缩放/块拖动/双击跳转反汇编）
+// 函数图窗口（独立 ImGui 窗口；交互：拖拽平移/滚轮缩放/单击选中/双击跳转反汇编）
 class function_graph_window {
 public:
     void open_at(uint64_t addr);
@@ -117,7 +118,6 @@ private:
 
     // 交互状态
     int    selected_ = -1;
-    int    drag_block_ = -1;
     bool   panning_ = false;
     ImVec2 last_mouse_{0, 0};
 };

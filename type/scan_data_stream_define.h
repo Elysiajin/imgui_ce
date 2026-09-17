@@ -202,19 +202,19 @@ inline bool is_byte_array_type(scan_data_type t) {
 
 inline std::string scan_data_type_to_string(scan_data_type t) {
     switch (t) {
-    case scan_data_type::bit:         return "Bit";
-    case scan_data_type::int8:        return "Byte";
-    case scan_data_type::int16:       return "2 Bytes";
-    case scan_data_type::int32:       return "4 Bytes";
-    case scan_data_type::int64:       return "8 Bytes";
-    case scan_data_type::float32:     return "Float";
-    case scan_data_type::float64:     return "Double";
-    case scan_data_type::ascii_string: return "String (Ascii)";
-    case scan_data_type::utf8_string:  return "String (UTF-8)";
-    case scan_data_type::utf16_string: return "String (UTF-16)";
-    case scan_data_type::byte_array:   return "Array of Byte";
-    case scan_data_type::all:         return "All";
-    case scan_data_type::structure:   return "Structure";
-    default:                        return "Unknown";
+    case scan_data_type::bit:         return "位";
+    case scan_data_type::int8:        return "字节";
+    case scan_data_type::int16:       return "2 字节";
+    case scan_data_type::int32:       return "4 字节";
+    case scan_data_type::int64:       return "8 字节";
+    case scan_data_type::float32:     return "单精度浮点数";
+    case scan_data_type::float64:     return "双精度浮点数";
+    case scan_data_type::ascii_string: return "字符串 (ASCII)";
+    case scan_data_type::utf8_string:  return "字符串 (UTF-8)";
+    case scan_data_type::utf16_string: return "字符串 (UTF-16)";
+    case scan_data_type::byte_array:   return "字节数组";
+    case scan_data_type::all:         return "全部数据类型";
+    case scan_data_type::structure:   return "结构体";
+    default:                        return "未知";
     }
 }

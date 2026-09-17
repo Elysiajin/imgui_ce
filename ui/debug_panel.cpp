@@ -1,4 +1,4 @@
-﻿#include "debug_panel.h"
+#include "debug_panel.h"
 #include "imgui.h"
 
 #include <psapi.h>
@@ -11,20 +11,20 @@ void debug_panel::render(bool& open) {
 
     ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(200, 100), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Debug Panel", &open)) {
+    if (ImGui::Begin("调试面板", &open)) {
         ImGui::Text("FPS:%.1f", ImGui::GetIO().Framerate);
-        ImGui::Text("CPU (system): %.1f%%   cores: %u", cpu_now_, cpu_cores_);
-        ImGui::Text("CPU (this process): %.1f%%", pcpu_now_);
-        ImGui::Text("MEM (system): %.1f%%   %llu MB free / %llu MB total",
+        ImGui::Text("CPU (系统): %.1f%%   核心数: %u", cpu_now_, cpu_cores_);
+        ImGui::Text("CPU (本进程): %.1f%%", pcpu_now_);
+        ImGui::Text("内存 (系统): %.1f%%   可用 %llu MB / 总计 %llu MB",
                     mem_now_, (unsigned long long)mem_avail_mb_,
                     (unsigned long long)mem_total_mb_);
-        ImGui::Text("MEM (this process): working set %.1f MB, commit %.1f MB",
+        ImGui::Text("内存 (本进程): 工作集 %.1f MB, 提交 %.1f MB",
                     ws_bytes_ / 1048576.0, commit_bytes_ / 1048576.0);
         if (gpu_ok_)
-            ImGui::Text("GPU: %ls   VRAM %.1f GB",
+            ImGui::Text("GPU: %ls   显存 %.1f GB",
                         gpu_name_.c_str(), gpu_vram_bytes_ / (1073741824.0));
         else
-            ImGui::Text("GPU: <unknown>");
+            ImGui::Text("GPU: <未知>");
 
         ImGui::Separator();
 
@@ -64,9 +64,9 @@ void debug_panel::render(bool& open) {
             ImGui::Dummy(ImVec2(w, h));
         };
 
-        plot("CPU (system)", cpu_hist_, 0.0f, 100.0f, "");
-        plot("CPU (proc)",   pcpu_hist_, 0.0f, 100.0f, "");
-        plot("MEM (system)", mem_hist_,  0.0f, 100.0f, "");
+        plot("CPU (系统)", cpu_hist_, 0.0f, 100.0f, "");
+        plot("CPU (进程)",   pcpu_hist_, 0.0f, 100.0f, "");
+        plot("内存 (系统)", mem_hist_,  0.0f, 100.0f, "");
     }
     ImGui::End();
 }

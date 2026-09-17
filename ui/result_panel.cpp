@@ -36,18 +36,18 @@ void result_panel::render() {
 
     // ---- Render-limit dropdown: cap how many rows we draw (0 = all) ----
     static int limit = 0;
-    constexpr const char* k_limit_items[] = { "All", "100", "1,000", "5,000", "10,000", "50,000" };
+    constexpr const char* k_limit_items[] = { "全部", "100", "1,000", "5,000", "10,000", "50,000" };
     constexpr int         k_limit_vals[]  = { 0,     100,   1000,    5000,    10000,    50000 };
     int limit_idx = 0;
     for (int i = 0; i < IM_ARRAYSIZE(k_limit_vals); ++i)
         if (k_limit_vals[i] == limit) { limit_idx = i; break; }
     ImGui::SetNextItemWidth(110);
-    if (ImGui::Combo("Render", &limit_idx, k_limit_items, IM_ARRAYSIZE(k_limit_items)))
+    if (ImGui::Combo("渲染", &limit_idx, k_limit_items, IM_ARRAYSIZE(k_limit_items)))
         limit = k_limit_vals[limit_idx];
 
     ImGui::SameLine();
     const size_t shown = (limit > 0 && (size_t)limit < total) ? (size_t)limit : total;
-    ImGui::Text("Found: %llu     Displaying: %llu", (unsigned long long)total, (unsigned long long)shown);
+    ImGui::Text("找到: %llu     显示: %llu", (unsigned long long)total, (unsigned long long)shown);
 
     const scan_data_type dtype = provider->get_display_type();
 
@@ -66,7 +66,7 @@ void result_panel::render() {
         char addr_buf[32];
         snprintf(addr_buf, sizeof(addr_buf), "%016llX", (unsigned long long)addr);
         rec.address = addr_buf;
-        rec.description = "result";
+        rec.description = "扫描结果";
         rec.valid = true;
         rec.type = scan_data_type_to_value_type(scan_dt);   // ← 关键：用扫描类型
         // 基准值 = 扫描类型对应的当前值（previous_value 作为改动基准）
@@ -80,9 +80,9 @@ void result_panel::render() {
         if (ImGui::BeginTable("##result", 3,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY |
                               ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn("Address");
-            ImGui::TableSetupColumn("Current");
-            ImGui::TableSetupColumn("Previous");
+            ImGui::TableSetupColumn("地址");
+            ImGui::TableSetupColumn("当前值");
+            ImGui::TableSetupColumn("前值");
             ImGui::TableHeadersRow();
 
             ImGuiListClipper clipper;
@@ -127,12 +127,12 @@ void result_panel::render() {
                     }
 
                     if(ImGui::BeginPopupContextItem("Result Menu")){
-                        if(ImGui::BeginMenu("Debugger")){
-                            if(ImGui::MenuItem("Find Access")){
+                        if(ImGui::BeginMenu("调试器")){
+                            if(ImGui::MenuItem("查找访问")){
 
                             }
 
-                            if(ImGui::MenuItem("Find Write")){
+                            if(ImGui::MenuItem("查找写入")){
 
                             }
 
@@ -171,7 +171,7 @@ void result_panel::render() {
     }
     ImGui::EndChild();
 
-    if (ImGui::Button("View Memory")) {
+    if (ImGui::Button("查看内存")) {
         // 扫描结果本质是数据地址：跳到内存浏览器的十六进制 dump 视图。
         uint64_t addr = 0;
         if (selected_row >= 0 && selected_row < row_total)
@@ -179,15 +179,15 @@ void result_panel::render() {
         ctx_.open_memory_viewer.emit(memory_viewer_mode::hexdump, addr);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Manual Add Address")) {}
+    if (ImGui::Button("手动添加地址")) {}
 
     if (ImGui::BeginPopup("##result_row_menu")) {
         if (selected_row >= 0 && selected_row < row_total) {
-            if (ImGui::MenuItem("Add to address list")) {
+            if (ImGui::MenuItem("添加到地址列表")) {
                 add_address_to_list(repo->get_address_at_index((size_t)selected_row));
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Copy address")) {
+            if (ImGui::MenuItem("复制地址")) {
                 char addr[32];
                 snprintf(addr, sizeof(addr), "%016llX",
                          (unsigned long long)repo->get_address_at_index(selected_row));

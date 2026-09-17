@@ -65,7 +65,7 @@ void process_detail_window::render_modules_tab() {
         state_.attached_pid = pm.attached_pid();
 
         state_.module_names.clear();
-        state_.module_names.push_back("<All Mods>");
+        state_.module_names.push_back("<全部模块>");
         for (const auto& m : modules_)
             state_.module_names.push_back(m.name);
         if (state_.module_selected < 0 || state_.module_selected >= (int)state_.module_names.size())
@@ -84,16 +84,16 @@ void process_detail_window::render_modules_tab() {
             ImGui::Text("%s | 0x%llX | 0x%llX", mod.name.c_str(),
                         (unsigned long long)mod.base, (unsigned long long)mod.size);
 
-            ImGui::TextUnformatted("Detailed symbols:");
+            ImGui::TextUnformatted("详细符号:");
             ImGui::Spacing();
 
             ensure_module_symbols(mi);
 
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
-            ImGui::InputTextWithHint("##sym_filter", "Filter symbols", sym_filter_, sizeof sym_filter_);
+            ImGui::InputTextWithHint("##sym_filter", "过滤符号", sym_filter_, sizeof sym_filter_);
 
             if (sym_module_ != mi || sym_rows_.empty()) {
-                ImGui::TextDisabled("(no exports)");
+                ImGui::TextDisabled("(无导出)");
             } else {
                 const float table_h = std::min(360.0f, ImGui::GetTextLineHeight() * 18.0f);
                 if (ImGui::BeginTable("##syms", 2,
@@ -101,9 +101,9 @@ void process_detail_window::render_modules_tab() {
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
                                       ImVec2(0.f, table_h))) {
                     ImGui::TableSetupScrollFreeze(0, 1);
-                    ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed,
+                    ImGui::TableSetupColumn("地址", ImGuiTableColumnFlags_WidthFixed,
                                             ImGui::CalcTextSize("FFFFFFFFFFFF").x + 14.f);
-                    ImGui::TableSetupColumn("Symbol", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("符号", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableHeadersRow();
 
                     // 过滤：小写包含匹配（空过滤串 = 全量）
@@ -194,11 +194,11 @@ void process_detail_window::render() {
 
     if (ImGui::Begin(title, &state_.show_process_detail)) {
         if (ImGui::BeginTabBar("##detail_tabs")) {
-            if (ImGui::BeginTabItem("Modules")) {
+            if (ImGui::BeginTabItem("模块")) {
                 render_modules_tab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Memory regions")) {
+            if (ImGui::BeginTabItem("内存区域")) {
                 render_regions_tab();
                 ImGui::EndTabItem();
             }

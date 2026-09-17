@@ -1,4 +1,4 @@
-﻿#include "hex_view.h"
+#include "hex_view.h"
 
 #include "address_value.h"
 #include "app_context.h"
@@ -62,12 +62,12 @@ int hex_view::type_count() { return 6; }
 const hex_view::display_type_info& hex_view::type_info(int idx)
 {
     static const display_type_info k_types[] = {
-        { "Byte",   1, true,  value_type::one_byte  },
-        { "Word",   2, true,  value_type::two_bytes },
-        { "Dword",  4, true,  value_type::four_bytes },
-        { "Qword",  8, true,  value_type::eight_bytes },
-        { "Float",  4, false, value_type::float32 },
-        { "Double", 8, false, value_type::float64 },
+        { "字节",   1, true,  value_type::one_byte  },
+        { "字",     2, true,  value_type::two_bytes },
+        { "双字",   4, true,  value_type::four_bytes },
+        { "四字",   8, true,  value_type::eight_bytes },
+        { "单精度浮点", 4, false, value_type::float32 },
+        { "双精度浮点", 8, false, value_type::float64 },
     };
     return k_types[idx];
 }
@@ -164,7 +164,7 @@ void hex_view::render()
 
     auto& pm = process_manager::instance();
     if (!pm.is_attached()) {
-        ImGui::TextDisabled("No process attached.");
+        ImGui::TextDisabled("未附加进程");
         return;
     }
 
@@ -236,7 +236,7 @@ void hex_view::render_toolbar()
     ImGui::SameLine();
     if (!ti.is_int)
         ImGui::BeginDisabled();
-    ImGui::Checkbox("Hex", &hex_display_);
+    ImGui::Checkbox("十六进制", &hex_display_);
     if (!ti.is_int)
         ImGui::EndDisabled();
 
@@ -246,14 +246,14 @@ void hex_view::render_toolbar()
     // 状态翻转导致 EndDisabled 多调一次而触发断言。
     const bool has_back = this->has_back();
     ImGui::BeginDisabled(!has_back);
-    if (ImGui::Button("Back")) {
+    if (ImGui::Button("后退")) {
         go_back();
     }
     ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(170);
-    if (ImGui::InputTextWithHint("##hv_goto", "Goto (hex), Enter",
+    if (ImGui::InputTextWithHint("##hv_goto", "转到 (十六进制), 回车",
                                  goto_buf_, sizeof(goto_buf_),
                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
         uint64_t a = 0;
@@ -306,7 +306,7 @@ void hex_view::render_table()
                           ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable,
                           ImVec2(0.f, avail_h))) {
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed,
+        ImGui::TableSetupColumn("地址", ImGuiTableColumnFlags_WidthFixed,
                                 ImGui::CalcTextSize(addr_sample).x + 12.f);
         const float value_w = ImGui::CalcTextSize(value_sample).x + 10.f;
         for (int c = 0; c < value_cols; ++c)
@@ -667,18 +667,18 @@ bool hex_view::write_bytes(uint64_t addr, const void* data, size_t n)
 
 void hex_view::render_cell_menu(uint64_t addr)
 {
-    if (ImGui::MenuItem("Copy address")) {
+    if (ImGui::MenuItem("复制地址")) {
         char b[24];
         snprintf(b, sizeof(b), "%016llX", (unsigned long long)addr);
         ImGui::SetClipboardText(b);
     }
-    if (ImGui::MenuItem("Add to address list")) {
+    if (ImGui::MenuItem("添加到地址列表")) {
         address_record rec;
         rec.real_address = addr;
         char b[24];
         snprintf(b, sizeof(b), "%016llX", (unsigned long long)addr);
         rec.address = b;
-        rec.description = "hex view";
+        rec.description = "十六进制视图";
         rec.valid = true;
         rec.type = type_info(display_type_).vtype;
         rec.previous_value = read_address_value(addr, rec.type);
@@ -688,7 +688,7 @@ void hex_view::render_cell_menu(uint64_t addr)
 
     auto* mem = process_manager::instance().memory();
     if (mem && mem->architecture() != process_arch::unknown &&
-        ImGui::MenuItem("Follow pointer")) {
+        ImGui::MenuItem("跟随指针")) {
         const int psz = (mem->architecture() == process_arch::x86_64) ? 8 : 4;
         uint8_t raw[8] = {};
         bool ok = true;

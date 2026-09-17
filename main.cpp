@@ -57,7 +57,7 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
 
 // ── 常驻状态进度条 ──────────────────────────────────────────
 // 左侧：附加状态（"未附加" / "PID xxxx · 进程名"）；右侧：扫描状态（"未扫描" / 百分比）。
-// 视觉：圆角药丸条 + 多层描边辉光；扫描中辉光随时间脉动。
+// 视觉：直角条 + 多层描边辉光；扫描中辉光随时间脉动。
 // 颜色：取当前主题的强调色（ImGuiCol_CheckMark，每套主题都定义为各自的主色调），
 //       再按背景明暗归一化饱和度/亮度 —— 色相跟随主题，保证 Dark / Light / Cyan /
 //       Midnight / Light Blue 下既醒目又不与整体风格割裂。
@@ -113,7 +113,7 @@ static void render_scan_status_bar()
     ImGui::ColorConvertHSVtoRGB(ah, as, av, accent.x, accent.y, accent.z);
     accent.w = 1.0f;
 
-    const float rounding = bar_h * 0.5f;
+    const float rounding = 0.0f;
 
     // 辉光：由外向内叠画多层圆角矩形，透明度递增；扫描中随时间脉动
     const float t = (float)ImGui::GetTime();
@@ -124,7 +124,7 @@ static void render_scan_status_bar()
         dl->AddRectFilled(ImVec2(p0.x - expand, p0.y - expand),
                           ImVec2(p1.x + expand, p1.y + expand),
                           ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, alpha)),
-                          rounding + expand);
+                          rounding);
     }
 
     // 条底与描边（描边用强调色低透明度，替代主题 Border，保证形态可辨）
@@ -183,7 +183,7 @@ int main()
                       GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr,
                       L"EditorWnd", nullptr };
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"My Editor", WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"内存修改器", WS_OVERLAPPEDWINDOW,
                               100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
     if (!CreateDeviceD3D(hwnd)) { CleanupDeviceD3D(); UnregisterClassW(wc.lpszClassName, wc.hInstance); return 1; }
@@ -249,7 +249,7 @@ int main()
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // 主线程事件队列：执行后台线程 post_to_main 的任务（如 scan_finished）。
+        // 主线程事件队列：执行后台线程 post_to_main 的任务。
         zc::drain_main_queue();
 
         // 附加的进程退出后自动脱离：清空扫描结果/地址区，回到未附加状态。
@@ -270,7 +270,7 @@ int main()
         ImGui::SetNextWindowSize(ImVec2(900, 620), ImGuiCond_FirstUseEver);
         static bool is_open = true;
 
-        if (ImGui::Begin("Test Window", &is_open, ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoCollapse)) {
+        if (ImGui::Begin("主界面", &is_open, ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoCollapse)) {
             main_menu.render();
             if(g_ui_state.show_process_window){
                 process_window.render();
@@ -279,8 +279,8 @@ int main()
             if(g_ui_state.show_about_window){
                 ImGui::SetNextWindowPos(ImVec2(700, 500), ImGuiCond_FirstUseEver);
 
-                if(ImGui::Begin("About", &g_ui_state.show_about_window, ImGuiWindowFlags_NoCollapse)) {
-                    ImGui::Text("Ahuthor:Jin");
+                if(ImGui::Begin("关于", &g_ui_state.show_about_window, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize)) {
+                    ImGui::Text("作者:Jin");
                     ImGui::Text("QQ:3264688446");
                 }
                 ImGui::End();
@@ -290,17 +290,15 @@ int main()
                 hex_window.render();
             }
 
-            // Debug panel (system monitor) — opened from About menu
             if (g_ui_state.show_debug_window) {
                 dpanel.render(g_ui_state.show_debug_window);
             }
 
-            // Settings window — Edit menu
             if (g_ui_state.show_settings_window) {
                 settings.render();
             }
             const float bottom_h = 200.0f;
-            // 常驻状态进度条（未附加 / 已附加(PID+进程名) / 扫描进度），带辉光效果
+            // 常进度条
             render_scan_status_bar();
             float top_h = ImGui::GetContentRegionAvail().y - bottom_h - ImGui::GetStyle().ItemSpacing.y;
             if (top_h < ImGui::GetFrameHeight()) top_h = ImGui::GetFrameHeight();
@@ -334,6 +332,7 @@ int main()
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
         }
+        // 垂直同步
         g_swapChain->Present(1, 0);
     }
 

@@ -10,9 +10,9 @@ void settings_window::render() {
     if (!state_.show_settings_window)
         return;
 
-    if (ImGui::Begin("Settings", &state_.show_settings_window, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin("设置", &state_.show_settings_window, ImGuiWindowFlags_NoCollapse)) {
 
-        ImGui::Text("Cache directory (empty = default %%TEMP%%/MyScanApp_Data/<pid>)");
+        ImGui::Text("缓存目录 (留空 = 默认 %%TEMP%%/MyScanApp_Data/<pid>)");
         static char dir_buf[0x400] = "";
         // 首次进入时用当前缓存根目录填充输入框
         static bool inited = false;
@@ -27,11 +27,11 @@ void settings_window::render() {
             state_.cache_dir = dir_buf;
         }
 
-        if (ImGui::Button("Apply cache path")) {
+        if (ImGui::Button("应用缓存路径")) {
             temp_path_manager::set_base_dir(state_.cache_dir);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Clean cache")) {
+        if (ImGui::Button("清理缓存")) {
             temp_path_manager::cleanup();
         }
         ImGui::SameLine();
@@ -39,11 +39,11 @@ void settings_window::render() {
         ImGui::Separator();
 
         // ---- 界面风格：下拉遍历主题注册表，便于后续扩展多种样式 ----
-        ImGui::Text("Theme");
+        ImGui::Text("主题");
         int cur_idx = -1;
         for (int i = 0; i < theme::count; ++i)
             if ((int)theme::registry[i].id == state_.theme) { cur_idx = i; break; }
-        const char* preview = (cur_idx >= 0) ? theme::registry[cur_idx].name : "Select theme...";
+        const char* preview = (cur_idx >= 0) ? theme::registry[cur_idx].name : "选择主题...";
         ImGui::SetNextItemWidth(220);
         if (ImGui::BeginCombo("##theme", preview)) {
             for (int i = 0; i < theme::count; ++i) {
