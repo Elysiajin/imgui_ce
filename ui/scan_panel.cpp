@@ -333,6 +333,13 @@ void scan_panel::render() {
             if (k_np[i].t == state_.next_scan_type_) { idx = i; break; }
         ImGui::Combo("扫描条件", &idx, labels, IM_ARRAYSIZE(k_np));
         state_.next_scan_type_ = k_np[idx].t;
+        // 语义提示：再次扫描是"对上一次结果的条件过滤"，变化/未变化类条件
+        // 比较的是与上次扫描时的快照值 —— 目标内存没变时选"变化的数值"
+        // 得到 0 条结果是正常行为，不是 bug。
+        ImGui::SetItemTooltip(
+            "对上一次扫描的结果做条件过滤。\n"
+            "\"变化的数值\"= 当前值 ≠ 上次扫描值（内存没变时结果为 0 属正常）\n"
+            "\"未变化的数值\"= 当前值 == 上次扫描值；想按同一个值重新过滤选\"精确数值\"");
     }
 
     const bool need_two = first_list ? (state_.first_scan_type_ == scan_type::between)
@@ -361,5 +368,6 @@ void scan_panel::render() {
         ImGui::SameLine();
         // 首次与再次扫描都支持"非"取反（CE 在两种扫描下都提供 Not 语义）
         ImGui::Checkbox("非(不匹配)", &state_.not_match);
+        ImGui::TextDisabled("保护类型：勾选 = 只扫描所选类型（并集）；全不勾 = 排除纯可执行区域");
     }
 }

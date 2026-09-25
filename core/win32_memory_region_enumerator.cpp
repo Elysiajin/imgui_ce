@@ -81,12 +81,24 @@ std::vector<memory_region> Win32MemoryRegionEnumerator::enumerate(const scan_req
         bool canWrite   = is_writable(mbi.Protect);
         bool canExecute = is_executable(mbi.Protect);
 
-        bool passwritable    = !mf.writable    || canWrite;
-        bool passexecutable  = !mf.executable  || canExecute;
-        bool passcopy_on_write = !mf.copy_on_write || is_writecopy(mbi.Protect);
-        if (!passwritable && !passexecutable && !passcopy_on_write) {
-            addr = next_block(); continue;
+        // ---- 阶段 3：保护属性过滤 ----
+        // 语义（对齐 CE 的 Writable/Executable/CopyOnWrite + 用户预期）：
+        //   - 任一勾选：只扫描满足"任一勾选属性"的区域（并集）。
+        //     旧写法 `!passA && !passB && !passC` 只在三处全失败时才剔除，
+        //     只勾一项或全不勾时完全不过滤，勾选形同虚设。
+        //   - 全不勾：排除"纯可执行"区域（可执行且不可写，如 PAGE_EXECUTE_READ
+        //     代码段），否则默认扫描会连代码段一起翻；要扫代码段请勾"可执行"。
+        //     可写区域（含 RWX）不受影响，常规数值扫描照常工作。
+        const bool any_prot_checked = mf.writable || mf.executable || mf.copy_on_write;
+        bool prot_ok;
+        if (any_prot_checked) {
+            prot_ok = (mf.writable      && canWrite)    ||
+                      (mf.executable    && canExecute) ||
+                      (mf.copy_on_write && is_writecopy(mbi.Protect));
+        } else {
+            prot_ok = !(canExecute && !canWrite);
         }
+        if (!prot_ok) { addr = next_block(); continue; }
 
         if (mf.access_filter & memory_filter::access_read && !canRead)     { addr = next_block(); continue; }
         if (mf.access_filter & memory_filter::access_write && !canWrite)    { addr = next_block(); continue; }
