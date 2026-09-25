@@ -18,6 +18,7 @@
 #include "ui/fonts.h"
 // #include "ui/assembler_window.h"
 #include "core/event/signal.h"
+#include "core/crash_report.h"
 #include "scan/scan_service.h"
 
 #include <d3d11.h>
@@ -62,6 +63,8 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
 
 int main()
 {
+    crash_report::install();   // 崩溃自报告：SEH/terminate 现场写入 crash_log.txt
+
     ImGui_ImplWin32_EnableDpiAwareness();
 
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0, 0,

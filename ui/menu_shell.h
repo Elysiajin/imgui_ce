@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <string>
 
+struct ImDrawList;
 class application_context;
 class scan_panel;
 class result_panel;
@@ -56,9 +57,10 @@ private:
     bool  anim_active_ = false;
     float anim_slide_  = 0.0f;
 
-    // 底部进程块缓存的附加进程名（仅 pid 变化时枚举一次，同状态条做法）
-    uint32_t    user_pid_ = 0;
+    // 底部进程块缓存（进程全量枚举较重，仅在 pid 变化时枚举一次）
+    uint32_t    user_pid_  = 0;
     std::string user_name_;
+    ImTextureID user_icon_ = 0;   // 进程图标纹理（未加载成功为 0）
 };
 
 // 扫描状态辉光条（经典布局与菜单风外壳共用；实现自 main.cpp 提取）

@@ -11,12 +11,19 @@ DEFINES += ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD
 
 QMAKE_CXXFLAGS += -mavx2 -mbmi2
 
+# 崩溃定位：release 也保留调试信息与符号表（crash_log.txt 记录的模块内
+# 偏移用 addr2line -e exe <0x140000000+off> 映射到源码行）
+QMAKE_CXXFLAGS_RELEASE += -g
+QMAKE_CFLAGS_RELEASE   += -g
+QMAKE_LFLAGS_RELEASE   -= -Wl,-s
+
 INCLUDEPATH += $$PWD $$PWD/libs $$PWD/libs/Imgui $$PWD/libs/assets $$PWD/ui $$PWD/core $$PWD/scan $$PWD/type $$PWD/asm $$PWD/ct
 INCLUDEPATH += $$PWD/libs/Zydis/include $$PWD/libs/Zydis/src $$PWD/libs/Zycore/include
 INCLUDEPATH += $$PWD/libs/S_inject
 INCLUDEPATH += $$PWD/libs/pugixml
 
 SOURCES += \
+    core/crash_report.cpp \
     asm/asm_parser.cpp \
     asm/asm_highlight.cpp \
     core/process_manager.cpp \
@@ -115,6 +122,7 @@ LIBS += -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -ldwmapi -lshell32
 LIBS += -lntdll -lwininet -lbcrypt -ladvapi32 -lpsapi -lws2_32 -lcrypt32
 
 HEADERS += \
+    core/crash_report.h \
     asm/asm_parser.h \
     asm/asm_highlight.h \
     core/imemory_accessor.h \

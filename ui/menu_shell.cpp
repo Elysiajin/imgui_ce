@@ -149,18 +149,26 @@ void menu_shell::draw_user_block(ImDrawList* dl, const ImVec2& p, const ImVec2& 
     // 例项目侧边栏底部的用户信息块（头像圆 + 名字两行）→
     // 本项目改为"附加进程块"：附加时显示进程头像与 PID/名称，
     // 未附加显示 '?'。点击打开进程选择窗口。
+    // 进程名与图标只在 pid 变化时枚举一次（进程全量枚举较重，禁止每帧执行）。
     auto& pm = process_manager::instance();
     if (pm.is_attached()) {
         const uint32_t pid = pm.attached_pid();
         if (user_pid_ != pid) {
-            user_pid_ = pid;
+            user_pid_   = pid;
             user_name_.clear();
-            for (const auto& pi : pm.processes().enumerate())
-                if (pi.pid == pid) { user_name_ = pi.name; break; }
+            user_icon_  = 0;
+            for (const auto& pi : pm.processes().enumerate()) {
+                if (pi.pid == pid) {
+                    user_name_ = pi.name;
+                    user_icon_ = process_icon_cache::instance().icon_for(pi);
+                    break;
+                }
+            }
         }
     } else {
         user_pid_  = 0;
         user_name_.clear();
+        user_icon_ = 0;
     }
 
     const ImVec2 center = p + ImVec2(40.0f, ws.y - 56.0f);
@@ -170,19 +178,11 @@ void menu_shell::draw_user_block(ImDrawList* dl, const ImVec2& p, const ImVec2& 
     // 外圈描边跟随强调色（例项目为固定色圆环）
     const ImU32 accent = ImGui::GetColorU32(ImGuiCol_CheckMark);
     dl->AddCircleFilled(center, r, IM_COL32(10, 9, 10, 255));
-    const process_info* info = nullptr;
-    if (user_pid_ != 0) {
-        for (const auto& pi : pm.processes().enumerate())
-            if (pi.pid == user_pid_) { info = &pi; break; }
-    }
     bool drew_icon = false;
-    if (info) {
-        const ImTextureID tex = process_icon_cache::instance().icon_for(*info);
-        if (tex) {
-            dl->AddImageRounded(tex, center - ImVec2(r, r), center + ImVec2(r, r),
-                                ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, r);
-            drew_icon = true;
-        }
+    if (user_icon_) {
+        dl->AddImageRounded(user_icon_, center - ImVec2(r, r), center + ImVec2(r, r),
+                            ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, r);
+        drew_icon = true;
     }
     if (!drew_icon && fonts::icon) {
         const ImVec2 isz = fonts::icon->CalcTextSizeA(24.0f, FLT_MAX, 0.0f, "?");
