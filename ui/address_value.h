@@ -31,6 +31,8 @@ inline scan_data_type value_type_to_scan_data_type(value_type t) {
     case value_type::float64:     return scan_data_type::float64;
     case value_type::text:        return scan_data_type::ascii_string;
     case value_type::byte_array:  return scan_data_type::byte_array;
+    case value_type::binary:         return scan_data_type::int64;   // 位域按 8 字节读
+    case value_type::auto_assembler: return scan_data_type::int32;   // 无值类型，仅占位
     }
     return scan_data_type::int32;
 }
@@ -50,15 +52,18 @@ inline value_type scan_data_type_to_value_type(scan_data_type t) {
 
 // 读内存并格式化为显示字符串；失败/unattached 返回 "---"。
 // radix 只对整数类型生效（Hex/Dec/Oct），浮点/字符串/AOB 忽略。
+// aob_len：byte_array 类型的读取长度（0 = 默认 32）。
+// bit_len：binary 类型的位串位数（0 = 默认 32）。
 inline std::string read_address_value(uint64_t addr, value_type t,
-                                      value_radix radix = value_radix::decimal) {
+                                      value_radix radix = value_radix::decimal,
+                                      int aob_len = 0, int bit_len = 0) {
     auto* mem = process_manager::instance().memory();
     if (!mem) return "---";
     const auto dt  = value_type_to_scan_data_type(t);
     const size_t sz = scan_data_type_size(dt);
     if (sz == 0) {                 // text / AOB 字符串
         if (t == value_type::byte_array) {
-            std::vector<uint8_t> buf(32);
+            std::vector<uint8_t> buf(aob_len > 0 ? (size_t)aob_len : 32);
             if (!mem->read(addr, buf.data(), buf.size())) return "---";
             return encoding_formatter::format_byte_array(buf.data(), buf.size());
         }
@@ -70,15 +75,37 @@ inline std::string read_address_value(uint64_t addr, value_type t,
     }
     uint64_t raw = 0;
     if (!mem->read(addr, &raw, sz)) return "---";
+    if (t == value_type::binary) {
+        // 按位串显示（MSB 在左），长度由 bit_len 决定
+        const int n = (bit_len > 0 && bit_len <= 64) ? bit_len : 32;
+        std::string s((size_t)n, '0');
+        for (int i = 0; i < n; ++i)
+            s[(size_t)(n - 1 - i)] = ((raw >> i) & 1) ? '1' : '0';
+        return s;
+    }
     return encoding_formatter::format_address_value(raw, dt, radix);
 }
 
 // 解析文本并按类型写回内存；成功返回 true。
 // radix 用于整数类型的非 0x/0 前缀输入（Hex/Oct/Dec 回退解析）。
+// binary 类型接收 "0101..." 位串（bit_len 位，从 LSB 起）。
 inline bool write_address_value(uint64_t addr, value_type t, const std::string& text,
-                                value_radix radix = value_radix::decimal) {
+                                value_radix radix = value_radix::decimal,
+                                int bit_len = 0) {
     auto* mem = process_manager::instance().memory();
     if (!mem) return false;
+    if (t == value_type::binary) {
+        // 位串 → 8 字节位模式（未提供的位保持 0）
+        uint64_t bits = 0;
+        int n = 0;
+        for (char c : text) {
+            if (c == ' ' || c == '_') continue;
+            if (c != '0' && c != '1') return false;
+            if (n < 64) bits |= (uint64_t)(c - '0') << n;
+            ++n;
+        }
+        return mem->write(addr, &bits, 8);
+    }
     const auto dt = value_type_to_scan_data_type(t);
     const size_t sz = scan_data_type_size(dt);
     if (sz == 0) {                 // text / AOB：写原始字节 + NUL 结尾

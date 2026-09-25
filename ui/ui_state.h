@@ -24,6 +24,9 @@ struct ui_state {
     // 设置页面
     bool        show_settings_window = false;
     int         theme     = 0;                    // 0 = Dark, 1 = Light
+    // 主界面布局模式：0 = 经典（窗口菜单栏 + 上下分栏），1 = 菜单风
+    // （imgui_menu_example 侧边栏外壳，建议配合 theme = Evicted 使用）
+    int         layout_mode = 0;
     std::string cache_dir;                        // 缓存目录（空 = 默认，用 %TEMP%/MyScanApp_Data/<pid>）
 
     scan_data_type data_type_ = scan_data_type::int32;   // 数值/字符串/字节数组/All/结构体
@@ -71,6 +74,10 @@ struct ui_state {
 
     // 扫描输入错误提示（空 = 无错误）
     std::string scan_error;
+
+    // ---- CT 表状态 ----
+    std::string current_ct_path;   // 最近打开/保存的 .CT（空 = 未打开）
+    std::string ct_error;          // CT 加载/保存错误提示（模态弹窗显示）
 };
 
 #endif // UI_STATE_H

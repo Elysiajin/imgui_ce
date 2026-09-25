@@ -15,6 +15,8 @@ public:
     bool write(uint64_t addr, const void* buffer, size_t size) override;
     bool is_process_alive() const override;
     std::string name() const override;
+    uint64_t alloc(size_t size) override;
+    bool free_mem(uint64_t addr) override;
     process_arch architecture() const override;
 
 private:

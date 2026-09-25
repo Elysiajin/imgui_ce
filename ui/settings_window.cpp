@@ -38,6 +38,22 @@ void settings_window::render() {
 
         ImGui::Separator();
 
+        // ---- 主界面布局：经典（菜单栏 + 上下分栏）/ 菜单风（侧边栏外壳）----
+        ImGui::Text("布局");
+        static const char* k_layouts[] = { "经典", "菜单风格" };
+        int lm = state_.layout_mode;
+        if (lm < 0 || lm > 1) lm = 0;
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo("##layout", k_layouts[lm])) {
+            for (int i = 0; i < 2; ++i) {
+                const bool selected = (i == lm);
+                if (ImGui::Selectable(k_layouts[i], selected))
+                    state_.layout_mode = i;
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
         // ---- 界面风格：下拉遍历主题注册表，便于后续扩展多种样式 ----
         ImGui::Text("主题");
         int cur_idx = -1;

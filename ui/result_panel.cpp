@@ -6,6 +6,7 @@
 #include "scan/scan_service.h"
 #include "scan/scan_data_provider.h"
 #include "core/process_manager.h"
+#include "ct/address_parser.h"
 
 #include <cstdio>
 #include <string>
@@ -179,7 +180,57 @@ void result_panel::render() {
         ctx_.open_memory_viewer.emit(memory_viewer_mode::hexdump, addr);
     }
     ImGui::SameLine();
-    if (ImGui::Button("手动添加地址")) {}
+    if (ImGui::Button("手动添加地址"))
+        show_add_dialog_ = true;
+
+    // ---- 手动添加地址对话框（CE 行为：描述/地址/类型，支持模块+偏移）----
+    if (show_add_dialog_)
+        ImGui::OpenPopup("##add_address");
+    if (ImGui::BeginPopupModal("##add_address", &show_add_dialog_,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        static const char* k_types[] = {
+            "字节", "2 字节", "4 字节", "8 字节", "单精度浮点数",
+            "双精度浮点数", "文本", "字节数组", "位域(二进制)"
+        };
+        ImGui::SetNextItemWidth(260);
+        ImGui::InputTextWithHint("描述", "如：血量", add_desc_buf_, sizeof(add_desc_buf_));
+        ImGui::SetNextItemWidth(260);
+        ImGui::InputTextWithHint("地址", "hex 或 模块+偏移（如 game.exe+2A3B）",
+                                 add_addr_buf_, sizeof(add_addr_buf_));
+        ImGui::SetNextItemWidth(260);
+        ImGui::Combo("类型", &add_type_index_, k_types, IM_ARRAYSIZE(k_types));
+        if (!add_error_.empty())
+            ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s", add_error_.c_str());
+        if (ImGui::Button("确定", ImVec2(80, 0))) {
+            const parsed_address pa = parse_interpretable_address(
+                add_addr_buf_,
+                process_manager::instance().module_snapshot());
+            if (!pa.ok) {
+                add_error_ = "无法解析地址（模块未枚举？先附加进程）";
+            } else {
+                address_record rec;
+                rec.real_address = pa.address;
+                rec.address = add_addr_buf_;   // 保留用户原文（可解释地址）
+                rec.description = add_desc_buf_[0] ? add_desc_buf_ : "手动添加";
+                rec.type = static_cast<value_type>(
+                    add_type_index_ >= 0 && add_type_index_ < 9 ? add_type_index_ : 2);
+                rec.valid = true;
+                rec.previous_value = read_address_value(rec.real_address, rec.type);
+                rec.value = rec.previous_value;
+                ctx_.address_list.add_record(rec);
+                add_error_.clear();
+                show_add_dialog_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("取消", ImVec2(80, 0))) {
+            add_error_.clear();
+            show_add_dialog_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     if (ImGui::BeginPopup("##result_row_menu")) {
         if (selected_row >= 0 && selected_row < row_total) {

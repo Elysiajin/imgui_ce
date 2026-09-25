@@ -45,6 +45,8 @@ public:
     std::vector<memory_region> get_memory_regions(const scan_request& req);
 
     bool resolve_address(uint64_t addr, std::string& out_display, bool& is_base) const;
+    // 模块缓存快照（带锁拷贝，无系统调用；CT 地址解析 / 脚本执行用）
+    std::vector<module_info> module_snapshot() const;
     std::shared_ptr<process_memory_snapshot_manager> get_snapshot_manager() { return snapshot_manager_; }
 
 

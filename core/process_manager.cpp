@@ -126,6 +126,12 @@ void process_manager::update_modules()
         modules_.clear();
 }
 
+std::vector<module_info> process_manager::module_snapshot() const
+{
+    std::shared_lock lock(modules_mutex_);
+    return modules_;
+}
+
 bool process_manager::terminate_process(uint32_t pid) {
     HANDLE h_process = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
     if(!h_process) return false;

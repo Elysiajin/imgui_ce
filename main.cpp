@@ -1,10 +1,11 @@
-#include "imgui.h"
+﻿#include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 
 #include "ui/scan_panel.h"
 #include "ui/result_panel.h"
 #include "ui/top_menu.h"
+#include "ui/menu_shell.h"
 #include "ui/process_list_window.h"
 #include "ui/process_detail_window.h"
 #include "ui/debug_panel.h"
@@ -14,6 +15,7 @@
 #include "ui/address_list_panel.h"
 #include "ui/process_icon_cache.h"
 #include "ui/memory_window.h"
+#include "ui/fonts.h"
 // #include "ui/assembler_window.h"
 #include "core/event/signal.h"
 #include "scan/scan_service.h"
@@ -55,125 +57,8 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
     return DefWindowProcW(hwnd, msg, w, l);
 }
 
-// ── 常驻状态进度条 ──────────────────────────────────────────
-// 左侧：附加状态（"未附加" / "PID xxxx · 进程名"）；右侧：扫描状态（"未扫描" / 百分比）。
-// 视觉：直角条 + 多层描边辉光；扫描中辉光随时间脉动。
-// 颜色：取当前主题的强调色（ImGuiCol_CheckMark，每套主题都定义为各自的主色调），
-//       再按背景明暗归一化饱和度/亮度 —— 色相跟随主题，保证 Dark / Light / Cyan /
-//       Midnight / Light Blue 下既醒目又不与整体风格割裂。
-static void render_scan_status_bar()
-{
-    auto& svc = scan_service::instance();
-    auto& pm  = process_manager::instance();
-
-    const bool  scanning = svc.is_scanning();
-    const bool  attached = pm.is_attached();
-    const float progress = scanning ? svc.progress() : 0.0f;
-
-    // 附加进程名缓存：仅在 pid 变化时枚举一次系统进程（避免每帧快照开销）
-    static uint32_t    s_pid = 0;
-    static std::string s_name;
-    if (attached) {
-        if (s_pid != pm.attached_pid()) {
-            s_pid = pm.attached_pid();
-            s_name.clear();
-            for (const auto& p : pm.processes().enumerate())
-                if (p.pid == s_pid) { s_name = p.name; break; }
-        }
-    } else {
-        s_pid  = 0;
-        s_name.clear();
-    }
-
-    const ImGuiStyle& st = ImGui::GetStyle();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-
-    const float bar_h = ImGui::GetTextLineHeight() + st.FramePadding.y * 2.0f + 6.0f;
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
-    const float  bar_w = ImGui::GetContentRegionAvail().x;
-    const ImVec2 p1 = ImVec2(p0.x + bar_w, p0.y + bar_h);
-    ImGui::Dummy(ImVec2(bar_w, bar_h));   // 常驻占位：无扫描时也保持布局稳定
-
-    const ImVec4 wbg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-    const float  lum = wbg.x * 0.299f + wbg.y * 0.587f + wbg.z * 0.114f;
-    const bool   is_light = lum > 0.5f;
-
-    // 强调色 = 主题强调色的色相 + 按明暗归一化的饱和度/亮度
-    ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_CheckMark);
-    float ah, as, av;
-    ImGui::ColorConvertRGBtoHSV(accent.x, accent.y, accent.z, ah, as, av);
-    if (as < 0.05f) { as = 0.65f; ah = 0.55f; }   // 主题强调色接近灰色时兜底为蓝色系
-    if (is_light) {
-        as = as < 0.65f ? 0.65f : as;             // 浅色背景：压暗到可读范围
-        av = 0.55f;
-    } else {
-        as = as < 0.85f ? 0.85f : as;             // 深色背景：提亮到高饱和鲜亮
-        av = av < 0.95f ? 0.95f : av;
-    }
-    ImGui::ColorConvertHSVtoRGB(ah, as, av, accent.x, accent.y, accent.z);
-    accent.w = 1.0f;
-
-    const float rounding = 0.0f;
-
-    // 辉光：由外向内叠画多层圆角矩形，透明度递增；扫描中随时间脉动
-    const float t = (float)ImGui::GetTime();
-    const float pulse = scanning ? 0.70f + 0.30f * sinf(t * 5.0f) : 0.45f;
-    for (int i = 4; i >= 1; --i) {
-        const float expand = (float)i * 2.5f;
-        const float alpha  = pulse * (is_light ? 0.16f : 0.30f) * (1.0f - (float)(i - 1) / 4.0f);
-        dl->AddRectFilled(ImVec2(p0.x - expand, p0.y - expand),
-                          ImVec2(p1.x + expand, p1.y + expand),
-                          ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, alpha)),
-                          rounding);
-    }
-
-    // 条底与描边（描边用强调色低透明度，替代主题 Border，保证形态可辨）
-    dl->AddRectFilled(p0, p1, ImGui::GetColorU32(ImGuiCol_FrameBg), rounding);
-    dl->AddRect(p0, p1, ImGui::GetColorU32(ImVec4(accent.x, accent.y, accent.z, 0.55f)), rounding);
-
-    // 进度填充 + 顶部高光
-    float frac = progress;
-    if (frac < 0.0f) frac = 0.0f;
-    if (frac > 1.0f) frac = 1.0f;
-    const float fill_w = bar_w * frac;
-    if (fill_w >= 2.0f) {
-        const ImVec2 fp1(p0.x + fill_w, p1.y);
-        dl->AddRectFilled(p0, fp1, ImGui::GetColorU32(accent), rounding);
-        const ImVec4 hi(accent.x + (1.0f - accent.x) * 0.30f,
-                        accent.y + (1.0f - accent.y) * 0.30f,
-                        accent.z + (1.0f - accent.z) * 0.30f, 0.45f);
-        dl->AddRectFilled(ImVec2(p0.x + 1.0f, p0.y + 1.0f),
-                          ImVec2(fp1.x - 1.0f, p0.y + (bar_h - 2.0f) * 0.45f),
-                          ImGui::GetColorU32(hi), rounding * 0.8f,
-                          ImDrawFlags_RoundCornersTop);
-    }
-
-    // 左侧附加状态 / 右侧扫描状态（分居两端，避免拥挤）
-    char left_buf[300];
-    if (attached) {
-        if (!s_name.empty())
-            snprintf(left_buf, sizeof(left_buf), "PID %u   ·   %s", (unsigned)s_pid, s_name.c_str());
-        else
-            snprintf(left_buf, sizeof(left_buf), "PID %u", (unsigned)s_pid);
-    } else {
-        snprintf(left_buf, sizeof(left_buf), "未附加");
-    }
-
-    char right_buf[32];
-    const char* right_text;
-    if (scanning) {
-        snprintf(right_buf, sizeof(right_buf), "%.1f%%", frac * 100.0f);
-        right_text = right_buf;
-    } else {
-        right_text = "未扫描";
-    }
-
-    const ImU32 text_col = ImGui::GetColorU32(accent);
-    const ImVec2 lsz = ImGui::CalcTextSize(left_buf);
-    dl->AddText(ImVec2(p0.x + st.FramePadding.x + 3.0f, p0.y + (bar_h - lsz.y) * 0.5f), text_col, left_buf);
-    const ImVec2 rsz = ImGui::CalcTextSize(right_text);
-    dl->AddText(ImVec2(p1.x - rsz.x - st.FramePadding.x - 3.0f, p0.y + (bar_h - rsz.y) * 0.5f), text_col, right_text);
-}
+// 扫描状态辉光条已提取至 ui/menu_shell.cpp（render_scan_status_bar），
+// 经典布局与菜单风外壳共用。
 
 int main()
 {
@@ -199,6 +84,8 @@ int main()
     ImFont* font = io.Fonts->AddFontFromFileTTF("C:\\Users\\HP\\Downloads\\zh-cn.ttf", 16.0f, nullptr,
                                  io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
     IM_ASSERT(font != nullptr);
+    fonts::regular = font;
+    fonts::load_icon();   // 图标字体（内存 TTF，供菜单风侧边栏/圆形按钮使用）
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_device, g_context);
@@ -216,6 +103,7 @@ int main()
     scan_panel scan_panel(g_ui_state, app_ctx);
     result_panel result_panel(app_ctx);
     top_menu main_menu(g_ui_state);
+    menu_shell shell(g_ui_state, app_ctx, scan_panel, result_panel, main_menu);
     // assembler_window assembler_window(g_ui_state);
 
     // 内存浏览器跳转：面板只发信号，由这里统一改 ui_state 的可见性与视图状态。
@@ -267,11 +155,22 @@ int main()
             }
         }
 
-        ImGui::SetNextWindowSize(ImVec2(900, 620), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(905, 624), ImGuiCond_FirstUseEver);
         static bool is_open = true;
 
-        if (ImGui::Begin("主界面", &is_open, ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoCollapse)) {
-            main_menu.render();
+        // 布局模式：0 = 经典（菜单栏 + 上下分栏），1 = 菜单风（侧边栏外壳）。
+        // 菜单风下窗口 NoBackground：半透明圆角面板底由 menu_shell 手绘。
+        const bool menu_mode = g_ui_state.layout_mode == 1;
+        const ImGuiWindowFlags main_flags = menu_mode
+            ? (ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground)
+            : (ImGuiWindowFlags_MenuBar  | ImGuiWindowFlags_NoCollapse);
+
+        if (ImGui::Begin("主界面", &is_open, main_flags)) {
+            if (menu_mode)
+                shell.render();      // 菜单风：侧边栏 + tab 内容区 + 状态条
+            else
+                main_menu.render();  // 经典：窗口菜单栏 + CT 弹窗
+
             if(g_ui_state.show_process_window){
                 process_window.render();
             }
@@ -297,25 +196,57 @@ int main()
             if (g_ui_state.show_settings_window) {
                 settings.render();
             }
-            const float bottom_h = 200.0f;
-            // 常进度条
-            render_scan_status_bar();
-            float top_h = ImGui::GetContentRegionAvail().y - bottom_h - ImGui::GetStyle().ItemSpacing.y;
-            if (top_h < ImGui::GetFrameHeight()) top_h = ImGui::GetFrameHeight();
 
-            // 左：扫描面板
-            ImGui::BeginChild("left", ImVec2(520, top_h), ImGuiChildFlags_Borders);
-            scan_panel.render();
-            ImGui::EndChild();
+            if (!menu_mode) {
+                const float bottom_h = 200.0f;
+                // 常进度条
+                render_scan_status_bar();
+                float top_h = ImGui::GetContentRegionAvail().y - bottom_h - ImGui::GetStyle().ItemSpacing.y;
+                if (top_h < ImGui::GetFrameHeight()) top_h = ImGui::GetFrameHeight();
 
-            // 右：结果区
-            ImGui::SameLine();
-            ImGui::BeginChild("right", ImVec2(0, top_h), ImGuiChildFlags_Borders);
-            result_panel.render();
-            ImGui::EndChild();
+                // 使用静态变量记录上方区域的高度（初始给一个值，或者根据窗口大小自适应）
+                static float above_height = 400.0f;
 
-            // 下：地址列表（由 application_context 持有的持久对象渲染）
-            app_ctx.address_list.render();
+                // 1. 绘制上方区域
+                ImGui::BeginChild("##Above Panel", ImVec2(0, above_height), ImGuiChildFlags_Borders);
+                {
+                    // 内部左右分栏动态适应高度
+                    float inner_h = ImGui::GetContentRegionAvail().y;
+                    ImGui::BeginChild("left", ImVec2(520, inner_h), ImGuiChildFlags_Borders);
+                    scan_panel.render();
+                    ImGui::EndChild();
+
+                    ImGui::SameLine();
+
+                    ImGui::BeginChild("right", ImVec2(0, inner_h), ImGuiChildFlags_Borders);
+                    result_panel.render();
+                    ImGui::EndChild();
+                }
+                ImGui::EndChild();
+
+                ImGui::InvisibleButton("##splitter", ImVec2(-1.0f, 4.0f)); // 宽度占满，高度8像素
+                if (ImGui::IsItemActive()) {
+                    // 鼠标拖拽时，实时修改上方高度
+                    above_height += ImGui::GetIO().MouseDelta.y;
+                }
+                if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+                    // 鼠标悬停或拖拽时，改变鼠标指针为上下箭头
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                }
+
+                float min_height = 40.0f;
+                float bottom_min_height = 10.0f; // 下方地址列表至少要保留的高度
+                float avail_h = ImGui::GetContentRegionAvail().y; // 当前主窗口剩余高度
+
+                if (above_height < min_height) above_height = min_height;
+                if (above_height > avail_h - bottom_min_height - 8.0f) {
+                    above_height = avail_h - bottom_min_height - 8.0f;
+                }
+
+                ImGui::BeginChild("##Below Panel", ImVec2(0, 0), ImGuiChildFlags_Borders);
+                app_ctx.address_list.render();
+                ImGui::EndChild();
+            } // !menu_mode（经典布局专属部分）
         }
         ImGui::End();
         if (!is_open) done = true;

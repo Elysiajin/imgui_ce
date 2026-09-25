@@ -121,6 +121,24 @@ bool Win32MemoryAccessor::is_process_alive() const
     return WaitForSingleObject(h_process_, 0) == WAIT_TIMEOUT;
 }
 
+uint64_t Win32MemoryAccessor::alloc(size_t size)
+{
+    if (!h_process_ || size == 0)
+        return 0;
+    // 64KB 对齐由系统完成；分配 RWX 以便 CE 脚本把代码/数据放进这块内存
+    LPVOID p = VirtualAllocEx(h_process_, nullptr, size,
+                              MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    return reinterpret_cast<uint64_t>(p);
+}
+
+bool Win32MemoryAccessor::free_mem(uint64_t addr)
+{
+    if (!h_process_ || !addr)
+        return false;
+    return VirtualFreeEx(h_process_, reinterpret_cast<LPVOID>(addr),
+                         0, MEM_RELEASE) != 0;
+}
+
 std::string Win32MemoryAccessor::name() const
 {
     return "Win32 API";

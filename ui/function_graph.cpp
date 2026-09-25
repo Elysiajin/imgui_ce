@@ -33,6 +33,29 @@ static bool fg_dark_ui() {
     return lum < 0.5f;
 }
 
+// 从 cand 线性解码（jcc/jmp/call 只计长度不跟随），不跨越 ret/int3，
+// 恰好落在 target 上返回 true。用于验证候选函数头与目标地址同属一段
+// 连续指令流（CE 找函数头 + Ghidra Function Finder 的共同核心手段）。
+static bool linear_reaches(disassembler& d, uint64_t cand, uint64_t target)
+{
+    if (cand == 0 || cand >= target || target - cand > 0x1000)
+        return false;
+    const auto lines = d.disassemble(cand, 512);
+    uint64_t cur = cand;
+    for (const auto& ln : lines) {
+        if (ln.address != cur)
+            return false;                          // 解码失败/错位
+        if (ln.is_ret || ln.bytes.compare(0, 2, "CC") == 0)
+            return false;                          // 不跨越 ret/int3
+        cur += ln.length;
+        if (cur == target)
+            return true;
+        if (cur > target)
+            return false;
+    }
+    return false;
+}
+
 } // namespace
 
 // ════════════════════════════ 构建 ════════════════════════════
@@ -164,18 +187,59 @@ uint64_t function_graph_builder::find_function_entry(uint64_t addr)
         }
     }
 
-    // 3) 位于导出符号起点之后 ≤0x2000 → 符号即函数入口
+    // 3) 向后回溯函数边界（CE/Ghidra 思路）：编译器在函数之间放 ret/int3/nop
+    //    填充。向前最多 0x400 字节收集这些边界，按地址从早到晚逐个验证：
+    //    从边界处线性解码（跳转/call 只计长度不跟随、不跨越 ret/int3）恰好
+    //    落在 addr 的最早边界即函数头。这样块 11E1 里的 jz、setnz cl 之类
+    //    的函数中部地址就不会再被误当成函数头。
+    {
+        const size_t back = (size_t)std::min<uint64_t>(addr, 0x400);
+        std::vector<uint8_t> buf(back);
+        if (back >= 2 && mem->read(addr - back, buf.data(), buf.size())) {
+            // 收集边界候选：ret(C3) 之后、int3/nop 填充串之后的位置
+            std::vector<uint64_t> cands;
+            size_t i = 0;
+            while (i + 1 < buf.size()) {
+                const uint8_t b = buf[i];
+                if (b == 0xCC || b == 0x90) {
+                    while (i < buf.size() && (buf[i] == 0xCC || buf[i] == 0x90))
+                        ++i;
+                    if (i < buf.size())
+                        cands.push_back(addr - back + i);
+                } else if (b == 0xC3) {
+                    cands.push_back(addr - back + i + 1);
+                    ++i;
+                } else {
+                    ++i;
+                }
+            }
+
+            disassembler d;
+            d.set_arch(mem->architecture());
+            for (uint64_t c : cands) {
+                if (linear_reaches(d, c, addr))
+                    return c;   // 最早的可达边界 = 函数头
+            }
+        }
+    }
+
+    // 4) 边界回溯失败时：addr 之前 ≤0x1000 的最近导出符号，且从符号线性
+    //    解码能恰好到达 addr → 符号即入口
     {
         symbol_table::instance().ensure_loaded_for_address(addr);
         const module_symbols* mod = nullptr;
         const symbol_entry*   sym = nullptr;
         uint64_t off = 0;
         if (symbol_table::instance().find_symbol(addr, &mod, &sym, &off) &&
-            off != 0 && off <= 0x2000)
-            return sym->address;
+            off != 0 && off <= 0x1000) {
+            disassembler d;
+            d.set_arch(mem->architecture());
+            if (linear_reaches(d, sym->address, addr))
+                return sym->address;
+        }
     }
 
-    // 4) 兜底：地址本身
+    // 5) 兜底：地址本身
     return addr;
 }
 
@@ -251,10 +315,15 @@ bool function_graph_builder::build(uint64_t addr, fg_function& out, std::string&
             if (ln.is_branch && ln.is_call)
                 continue;                          // call 不影响 CFG 顺序流
 
-            if (ln.is_branch && !ln.is_cond) {     // 无条件 jmp
+            if (ln.is_branch && !ln.is_cond) {     // 无条件 jmp：块终止
                 const uint64_t t = ln.branch_target;
-                if (t == 0 || t == cur)
-                    break;                         // 间接跳转/自跳：无法静态跟随
+                if (t == 0)
+                    break;                         // 间接跳转：无法静态跟随
+                if (t == cur) {                    // jmp 下一指令 ≡ 顺序流
+                    f_->blocks[bi].edge_fall = resolve_target(cur);
+                    f_->blocks[bi].fall_addr = cur;
+                    break;
+                }
                 if (t >= out.entry - kRange && t <= out.entry + kRange) {
                     f_->blocks[bi].edge_jmp = resolve_target(t);
                     f_->blocks[bi].jmp_addr = t;
@@ -265,7 +334,7 @@ bool function_graph_builder::build(uint64_t addr, fg_function& out, std::string&
                 break;
             }
 
-            if (ln.is_cond) {                      // 条件跳转：taken 一侧成块
+            if (ln.is_cond) {                      // 条件跳转：终止当前基本块
                 const uint64_t t = ln.branch_target;
                 if (t != 0 && t >= out.entry - kRange && t <= out.entry + kRange) {
                     f_->blocks[bi].edge_taken = resolve_target(t);
@@ -274,7 +343,11 @@ bool function_graph_builder::build(uint64_t addr, fg_function& out, std::string&
                     f_->blocks[bi].taken_external = true;
                     f_->blocks[bi].taken_addr = t;
                 }
-                // fall-through 顺序继续
+                // fall-through 另起新块（CE/Ghidra 基本块语义：jcc 是块终结符，
+                // 命中/未命中两个方向各自成块，跳转指令不再出现在块中部）
+                f_->blocks[bi].edge_fall = resolve_target(cur);
+                f_->blocks[bi].fall_addr = cur;
+                break;
             }
 
             // 顺序后继：命中其它块的起点 → 连边收敛；命中块中部 → 拆分

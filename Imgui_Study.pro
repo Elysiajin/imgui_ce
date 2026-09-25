@@ -4,14 +4,17 @@ CONFIG -= app_bundle
 CONFIG -= qt
 
 DEFINES += UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
+# ImVec2/ImVec4 数学运算符（menu_shell/menu_widgets 的手绘布局依赖）
+DEFINES += IMGUI_DEFINE_MATH_OPERATORS
 DEFINES += __AVX2__
 DEFINES += ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD
 
 QMAKE_CXXFLAGS += -mavx2 -mbmi2
 
-INCLUDEPATH += $$PWD $$PWD/libs $$PWD/libs/Imgui $$PWD/ui $$PWD/core $$PWD/scan $$PWD/type $$PWD/asm
+INCLUDEPATH += $$PWD $$PWD/libs $$PWD/libs/Imgui $$PWD/libs/assets $$PWD/ui $$PWD/core $$PWD/scan $$PWD/type $$PWD/asm $$PWD/ct
 INCLUDEPATH += $$PWD/libs/Zydis/include $$PWD/libs/Zydis/src $$PWD/libs/Zycore/include
 INCLUDEPATH += $$PWD/libs/S_inject
+INCLUDEPATH += $$PWD/libs/pugixml
 
 SOURCES += \
     asm/asm_parser.cpp \
@@ -21,6 +24,10 @@ SOURCES += \
     core/win32_memory_region_enumerator.cpp \
     core/win32_module_enumerator.cpp \
     core/win32_process_enumerator.cpp \
+    ct/aa_script.cpp \
+    ct/address_parser.cpp \
+    ct/cheat_table.cpp \
+    ct/ct_bridge.cpp \
     scan/scan_engine.cpp \
     scan/scan_service.cpp \
     scan/scan_result_repository.cpp \
@@ -35,6 +42,7 @@ SOURCES += \
     libs/Imgui/imgui_impl_win32.cpp \
     libs/Imgui/imgui_impl_dx11.cpp \
     libs/Imgui/TextEditor.cpp \
+    libs/pugixml/pugixml.cpp \
     main.cpp \
     ui/address_list_panel.cpp \
     ui/function_graph.cpp \
@@ -42,8 +50,11 @@ SOURCES += \
     ui/assembler_window.cpp \
     ui/debug_panel.cpp \
     ui/file_browser.cpp \
+    ui/fonts.cpp \
     ui/hex_view.cpp \
     ui/inject_window.cpp \
+    ui/menu_shell.cpp \
+    ui/menu_widgets.cpp \
     ui/zydis_disassembler.cpp \
     ui/memory_window.cpp \
     ui/process_detail_window.cpp \
@@ -117,7 +128,13 @@ HEADERS += \
     core/win32_module_enumerator.h \
     core/win32_process_enumerator.h \
     core/event/signal.h \
+    ct/aa_script.h \
+    ct/address_parser.h \
+    ct/cheat_table.h \
+    ct/ct_bridge.h \
     libs/BS_thread_pool.hpp \
+    libs/assets/ico_font.h \
+    libs/pugixml/pugixml.hpp \
     scan/iscan_value_provider.h \
     scan/iprocess_memory_snapshot.h \
     scan/scan_data_provider.h \
@@ -152,6 +169,9 @@ HEADERS += \
     ui/zydis_disassembler.h \
     ui/memory_window.h \
     ui/function_graph.h \
+    ui/fonts.h \
+    ui/menu_shell.h \
+    ui/menu_widgets.h \
     ui/process_detail_window.h \
     ui/process_list_window.h \
     ui/process_icon_cache.h \

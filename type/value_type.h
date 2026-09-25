@@ -13,6 +13,8 @@ enum class value_type : uint8_t {
     float64,
     text,
     byte_array,
+    binary,           // CE 的 Binary（按位显示/编辑）
+    auto_assembler,   // CE 的 Auto Assembler Script 条目（值列显示 <脚本>）
 };
 
 // 地址栏数值显示的进制（对应 CE 内存记录 / hexview 的 showashex + 本项目增强的八进制）。

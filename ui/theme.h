@@ -18,6 +18,7 @@ enum class theme_id {
     Cyan      = 2,
     Midnight  = 3,
     LightBlue = 4,
+    Evicted   = 5,   // 菜单风（imgui_menu_example 风格，配合 layout_mode=1 使用）
 
     Count
 };
@@ -28,6 +29,7 @@ namespace theme
     inline void apply_cyan();
     inline void apply_midnight();
     inline void apply_lightblue();
+    inline void apply_evicted();
 
     // 主题项：名称（用于设置窗口下拉）+ 应用回调（无参）
     struct item {
@@ -47,6 +49,7 @@ namespace theme
         { "青色",       theme_id::Cyan,       apply_cyan },
         { "午夜",   theme_id::Midnight,   apply_midnight },
         { "浅蓝", theme_id::LightBlue,  apply_lightblue },
+        { "菜单风",   theme_id::Evicted,    apply_evicted },
     };
 
     // 注册表条目数（自动推导，便于遍历）
@@ -231,6 +234,100 @@ namespace theme
         col[ImGuiCol_TableRowBg]            = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
         col[ImGuiCol_TableRowBgAlt]         = ImVec4(0.00f, 0.00f, 0.00f, 0.05f);
         col[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
+    }
+
+    // Evicted 主题（菜单风，imgui_menu_example 风格移植；命名取自例项目 Logo）
+    //
+    // 色值出处为例项目 main.cpp 的硬编码绘制色：主面板 ImColor(9,9,9,180)、
+    // 侧边栏/分割线 (25,25,25,180)、强调色为默认 Widget Color RGB(190,38,38)。
+    // 例项目透出的是模糊背景图，本项目按约定透出深色纯底，故 WindowBg 取
+    // 近似不透明的深灰黑（保留少量透明度以维持玻璃质感）。
+    inline void apply_evicted()
+    {
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowRounding    = 8.0f;
+        style.ChildRounding     = 8.0f;
+        style.PopupRounding     = 8.0f;
+        style.FrameRounding     = 4.0f;
+        style.GrabRounding      = 4.0f;
+        style.ScrollbarRounding = 8.0f;
+        style.TabRounding       = 6.0f;
+        style.WindowPadding     = ImVec2(10.0f, 10.0f);
+        style.FramePadding      = ImVec2(6.0f, 4.0f);
+        style.ItemSpacing       = ImVec2(8.0f, 6.0f);
+        style.ScrollbarSize     = 13.0f;
+
+        const ImVec4 accent    (0.745f, 0.149f, 0.149f, 1.00f);   // RGB(190,38,38)
+        const ImVec4 accent_hi (0.880f, 0.260f, 0.260f, 1.00f);   // hover 提亮
+        const ImVec4 accent_lo (0.580f, 0.110f, 0.110f, 1.00f);   // active 压暗
+
+        ImVec4* col = style.Colors;
+        col[ImGuiCol_Text]                  = ImVec4(0.92f, 0.92f, 0.94f, 1.00f);
+        col[ImGuiCol_TextDisabled]          = ImVec4(0.52f, 0.52f, 0.55f, 1.00f);
+        col[ImGuiCol_WindowBg]              = ImVec4(0.035f, 0.035f, 0.039f, 0.94f);  // (9,9,9)
+        col[ImGuiCol_ChildBg]               = ImVec4(0.098f, 0.098f, 0.102f, 0.62f);  // (25,25,25)
+        col[ImGuiCol_PopupBg]               = ImVec4(0.070f, 0.070f, 0.075f, 0.97f);
+        col[ImGuiCol_Border]                = ImVec4(0.24f, 0.24f, 0.25f, 0.55f);
+        col[ImGuiCol_BorderShadow]          = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+
+        col[ImGuiCol_FrameBg]               = ImVec4(0.130f, 0.130f, 0.140f, 1.00f);
+        col[ImGuiCol_FrameBgHovered]        = ImVec4(0.170f, 0.170f, 0.180f, 1.00f);
+        col[ImGuiCol_FrameBgActive]         = ImVec4(accent.x * 0.45f, accent.y * 0.45f, accent.z * 0.45f, 1.00f);
+
+        col[ImGuiCol_TitleBg]               = ImVec4(0.045f, 0.045f, 0.050f, 1.00f);
+        col[ImGuiCol_TitleBgActive]         = ImVec4(0.060f, 0.060f, 0.065f, 1.00f);
+        col[ImGuiCol_TitleBgCollapsed]      = ImVec4(0.045f, 0.045f, 0.050f, 0.75f);
+        col[ImGuiCol_MenuBarBg]             = ImVec4(0.070f, 0.070f, 0.075f, 1.00f);
+
+        col[ImGuiCol_ScrollbarBg]           = ImVec4(0.060f, 0.060f, 0.065f, 1.00f);
+        col[ImGuiCol_ScrollbarGrab]         = ImVec4(0.220f, 0.220f, 0.230f, 1.00f);
+        col[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(0.320f, 0.320f, 0.330f, 1.00f);
+        col[ImGuiCol_ScrollbarGrabActive]   = accent;
+
+        col[ImGuiCol_CheckMark]             = accent;
+        col[ImGuiCol_SliderGrab]            = accent;
+        col[ImGuiCol_SliderGrabActive]      = accent_hi;
+
+        col[ImGuiCol_Button]                = ImVec4(0.150f, 0.150f, 0.160f, 1.00f);
+        col[ImGuiCol_ButtonHovered]         = accent;
+        col[ImGuiCol_ButtonActive]          = accent_lo;
+
+        col[ImGuiCol_Header]                = ImVec4(accent.x, accent.y, accent.z, 0.55f);
+        col[ImGuiCol_HeaderHovered]         = ImVec4(accent_hi.x, accent_hi.y, accent_hi.z, 0.75f);
+        col[ImGuiCol_HeaderActive]          = accent;
+
+        col[ImGuiCol_Separator]             = ImVec4(0.24f, 0.24f, 0.25f, 0.55f);
+        col[ImGuiCol_SeparatorHovered]      = accent;
+        col[ImGuiCol_SeparatorActive]       = accent_hi;
+
+        col[ImGuiCol_ResizeGrip]            = ImVec4(0.24f, 0.24f, 0.25f, 0.30f);
+        col[ImGuiCol_ResizeGripHovered]     = accent;
+        col[ImGuiCol_ResizeGripActive]      = accent_hi;
+
+        col[ImGuiCol_Tab]                   = ImVec4(0.100f, 0.100f, 0.105f, 1.00f);
+        col[ImGuiCol_TabHovered]            = ImVec4(accent_hi.x, accent_hi.y, accent_hi.z, 0.80f);
+        col[ImGuiCol_TabSelected]           = ImVec4(accent.x, accent.y, accent.z, 0.75f);
+        col[ImGuiCol_TabDimmed]             = ImVec4(0.080f, 0.080f, 0.085f, 1.00f);
+        col[ImGuiCol_TabDimmedSelected]     = ImVec4(0.120f, 0.100f, 0.100f, 1.00f);
+        col[ImGuiCol_DockingPreview]        = ImVec4(accent.x, accent.y, accent.z, 0.50f);
+        col[ImGuiCol_DockingEmptyBg]        = ImVec4(0.045f, 0.045f, 0.050f, 1.00f);
+
+        col[ImGuiCol_PlotLines]             = ImVec4(0.75f, 0.75f, 0.78f, 1.00f);
+        col[ImGuiCol_PlotLinesHovered]      = accent_hi;
+        col[ImGuiCol_PlotHistogram]         = accent;
+        col[ImGuiCol_PlotHistogramHovered]  = accent_hi;
+
+        col[ImGuiCol_TextSelectedBg]        = ImVec4(accent.x, accent.y, accent.z, 0.35f);
+        col[ImGuiCol_DragDropTarget]        = accent_hi;
+        col[ImGuiCol_NavCursor]             = ImVec4(accent.x, accent.y, accent.z, 0.80f);
+
+        col[ImGuiCol_TableHeaderBg]         = ImVec4(0.120f, 0.120f, 0.130f, 1.00f);
+        col[ImGuiCol_TableBorderStrong]     = ImVec4(0.280f, 0.280f, 0.290f, 1.00f);
+        col[ImGuiCol_TableBorderLight]      = ImVec4(0.190f, 0.190f, 0.200f, 1.00f);
+        col[ImGuiCol_TableRowBg]            = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+        col[ImGuiCol_TableRowBgAlt]         = ImVec4(1.00f, 1.00f, 1.00f, 0.03f);
+
+        col[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.60f);
     }
 }
 
