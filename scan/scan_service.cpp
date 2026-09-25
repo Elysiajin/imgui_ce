@@ -34,39 +34,69 @@ void scan_service::start_scan(const scan_request& request)
     if (m_worker.joinable())
         m_worker.join();   // 等待上一轮任务完全退出
 
-    m_expect_empty_results = (request.mode == scan_mode::first &&
-                            request.first_type == scan_type::unknown_initial);
+    // UI 线程准备段：只做轻量操作（换出上一轮结果为 O(1) move 或 <=阈值的小
+    // vector 打包）。失败也不能让异常逃出 UI 线程的调用栈。
+    try {
+        m_expect_empty_results = (request.mode == scan_mode::first &&
+                                request.first_type == scan_type::unknown_initial);
 
-    std::vector<scan_result> current_results;
-    if (request.mode == scan_mode::next) {
-        current_results = m_repository->get_results();
-    }
+        if (m_repository && m_repository->get_result_count() > 0) {
+            m_repository->save_as_previous_results();
+        }
 
-    if (m_repository && m_repository->get_result_count() > 0) {
-        m_repository->save_as_previous_results();
-    }
-
-    if (request.mode == scan_mode::first && request.first_type == scan_type::unknown_initial) {
-        m_expect_empty_results = true;
+        if (request.mode == scan_mode::first && request.first_type == scan_type::unknown_initial) {
+            m_expect_empty_results = true;
+        }
+    } catch (const std::exception& e) {
+        m_scanning.store(false, std::memory_order_release);
+        application_context::instance().scan_failed.emit(
+            std::string("扫描启动失败: ") + e.what());
+        return;
     }
 
     m_scanning.store(true, std::memory_order_release);
     application_context::instance().scan_started.emit();
-    m_worker = std::thread([this, request, current_results = std::move(current_results)]() {
-        //   写回 repository
-        scan_engine::scan_report pack = m_engine->execute(request, current_results);
-        if (pack.results && pack.results->total_size() > 0) {
-            m_repository->replace_all_results_from_pool(pack.results);
+    m_worker = std::thread([this, request]() {
+        // 任何异常都不允许逃出线程（会 std::terminate 崩掉整个进程）：
+        // 大结果集的 解码/排序/入库 都可能 bad_alloc，一律转成错误上报 UI。
+        std::string error;
+        try {
+            // prev_results 在工作线程内再取：大结果集解码成 vector 可能秒级
+            // 耗时，放在 UI 线程会把界面冻住。
+            std::vector<scan_result> current_results;
+            if (request.mode == scan_mode::next)
+                current_results = m_repository->get_results();
+
+            scan_engine::scan_report pack = m_engine->execute(request, current_results);
+            // 用户点了撤销：跳过入库，尽快结束线程让 cancel() 的 join() 返回。
+            if (!m_engine->is_cancelled() && pack.results && pack.results->total_size() > 0) {
+                std::string pack_err;
+                if (!m_repository->replace_all_results_from_pool(pack.results, &pack_err))
+                    error = pack_err;
+            }
+            // 更新结果显示类型
+            if (m_data_provider)
+                m_data_provider->set_display_type(pack.data_type);
+            if (error.empty())
+                m_scan_finished.store(true, std::memory_order_release);
+        } catch (const std::bad_alloc&) {
+            error = "扫描失败：内存不足（结果集或内存快照过大）";
+        } catch (const std::exception& e) {
+            error = std::string("扫描失败: ") + e.what();
+        } catch (...) {
+            error = "扫描失败：未知异常";
         }
-        // 更新结果显示类型
-        if (m_data_provider)
-            m_data_provider->set_display_type(pack.data_type);
-        m_scan_finished.store(true, std::memory_order_release);
         m_scanning.store(false, std::memory_order_release);
-        // 通知订阅方：跨线程，调度到主线程队列，主循环 drain() 时安全触发。
-        zc::post_to_main([] {
-            application_context::instance().scan_finished.emit();
-        });
+        if (!error.empty()) {
+            zc::post_to_main([error] {
+                application_context::instance().scan_failed.emit(error);
+            });
+        } else {
+            // 通知订阅方：跨线程，调度到主线程队列，主循环 drain() 时安全触发。
+            zc::post_to_main([] {
+                application_context::instance().scan_finished.emit();
+            });
+        }
     });
 }
 

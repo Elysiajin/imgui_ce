@@ -24,6 +24,11 @@ scan_panel::scan_panel(ui_state& ui, application_context& ctx) : state_(ui), ctx
         state_.first_scan_done = true;
         state_.scan_mode = scan_mode::next;
     });
+    // 扫描失败（工作线程异常兜底 / 大结果集入库失败）：显示到错误区。
+    // 失败时 scan_finished 不会发出，scan_mode 保持不变，可直接重试。
+    ctx_.scan_failed.connect([this](std::string msg) {
+        state_.scan_error = std::move(msg);
+    });
     subscribed_ = true;
 }
 

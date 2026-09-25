@@ -1,8 +1,9 @@
-﻿#pragma once
+#pragma once
 #include "type/scan_data_stream_define.h"
 #include "scan/adaptive_cache.h"
 #include "scan/scan_result_store.h"
 #include <algorithm>
+#include <string>
 #include <vector>
 #include <atomic>
 #include <mutex>
@@ -29,8 +30,14 @@ constexpr size_t POOL_MEMORY_THRESHOLD = 500'000;
 
 class scan_result_repository {
 public:
-    void replace_all_results(std::vector<scan_result>&& new_results);
-    void replace_all_results_from_pool(std::shared_ptr<adaptive_cache_pool<scan_result>> pool);
+    // 打包并替换当前结果。耗时阶段（整池读出/排序/压缩）在锁外执行，仅最终
+    // 交换持有 m_mutex —— 否则大结果集打包期间（可达数分钟）UI 每帧读取
+    // 都会阻塞在同一把锁上，界面假死。失败（典型：结果集过大内存不足）返回
+    // false 并填 *error；绝不抛异常：调用方在扫描工作线程，异常逃出会
+    // std::terminate 直接崩掉整个进程。
+    bool replace_all_results(std::vector<scan_result>&& new_results, std::string* error = nullptr);
+    bool replace_all_results_from_pool(std::shared_ptr<adaptive_cache_pool<scan_result>> pool,
+                                       std::string* error = nullptr);
 
     size_t get_result_count() const;
     const scan_result* get_result_at(size_t index) const;

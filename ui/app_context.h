@@ -39,6 +39,10 @@ public:
     zc::signal<> scan_started;
     zc::signal<> scan_finished;
 
+    // 扫描失败通知（携带错误描述）：工作线程异常兜底 / 大结果集入库失败等。
+    // 经 post_to_main 调度到主线程触发，scan_panel 订阅后显示到错误区。
+    zc::signal<std::string> scan_failed;
+
     // 请求打开内存浏览器并跳转到指定视图/地址。
     // 由 main.cpp 订阅，统一改 ui_state（面板不直接访问 ui_state）。
     zc::signal<memory_viewer_mode, uint64_t> open_memory_viewer;

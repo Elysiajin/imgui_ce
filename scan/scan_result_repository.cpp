@@ -29,42 +29,84 @@ scan_result_store scan_result_repository::pack_from_vector(const std::vector<sca
     return store;
 }
 
-void scan_result_repository::replace_all_results(std::vector<scan_result>&& new_results) {
+bool scan_result_repository::replace_all_results(std::vector<scan_result>&& new_results,
+                                                 std::string* error) {
+    // 排序/压缩在锁外完成（大结果集耗时可达分钟级），最后短临界区交换
+    std::shared_ptr<scan_result_store> new_store;
+    std::vector<scan_result> sorted;
+    try {
+        sorted = std::move(new_results);
+        sort_by_address(sorted);
+        if (sorted.size() > POOL_MEMORY_THRESHOLD) {
+            new_store = std::make_shared<scan_result_store>();
+            new_store->build(sorted);
+        }
+    } catch (const std::bad_alloc&) {
+        if (error) *error = "结果集过大，内存不足入库失败（试试缩小扫描范围或换更精确的条件）";
+        return false;
+    } catch (const std::exception& e) {
+        if (error) *error = std::string("结果入库失败: ") + e.what();
+        return false;
+    } catch (...) {
+        if (error) *error = "结果入库失败（未知异常）";
+        return false;
+    }
+
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_result_store.reset();
-    sort_by_address(new_results);
-    if (new_results.size() <= POOL_MEMORY_THRESHOLD) {
-        m_result_data = std::move(new_results);
-    } else {
-        m_result_store = std::make_shared<scan_result_store>();
-        m_result_store->build(new_results);
+    m_result_store = std::move(new_store);   // 可能为空（小结果集走向量）
+    if (m_result_store) {
         m_result_data.clear();
         m_result_data.shrink_to_fit();
+    } else {
+        m_result_data = std::move(sorted);
     }
     m_generation.fetch_add(1, std::memory_order_release);
+    return true;
 }
 
-void scan_result_repository::replace_all_results_from_pool(std::shared_ptr<adaptive_cache_pool<scan_result>> pool) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_result_store.reset();
-    m_result_data.clear();
-    m_result_data.shrink_to_fit();
-
-    const size_t total_count = pool ? pool->total_size() : 0;
-    if (total_count > 0) {
-        // 一次性读出后排序：原始 vector 只在入库瞬间存在，随后按阈值
-        // 走 小结果集向量 或 压缩驻留（0.2~0.9 倍），不再保留磁盘池。
-        std::vector<scan_result> all = pool->read_chunk(0, total_count);
-        pool->clear();
-        sort_by_address(all);
-        if (total_count <= POOL_MEMORY_THRESHOLD) {
-            m_result_data = std::move(all);
-        } else {
-            m_result_store = std::make_shared<scan_result_store>();
-            m_result_store->build(all);
+bool scan_result_repository::replace_all_results_from_pool(
+    std::shared_ptr<adaptive_cache_pool<scan_result>> pool, std::string* error) {
+    // 打包阶段（整池读出 + 排序 + 压缩）对大结果集可达数秒到数分钟，绝不能
+    // 持有 m_mutex 执行 —— UI 线程每帧 read_pool_chunk 都在等同一把锁，持锁
+    // 打包等于把界面冻住。耗时工作全部在锁外完成，最后短临界区交换。
+    // 峰值内存 = 全量 vector + 压缩存储，超大结果集可能 bad_alloc：在这里
+    // 兜底转成错误返回，不让异常逃出到扫描线程（会 terminate 崩进程）。
+    std::shared_ptr<scan_result_store> new_store;
+    std::vector<scan_result> all;
+    try {
+        const size_t total_count = pool ? pool->total_size() : 0;
+        if (total_count > 0) {
+            // 一次性读出后排序：原始 vector 只在入库瞬间存在，随后按阈值
+            // 走 小结果集向量 或 压缩驻留（0.2~0.9 倍），不再保留磁盘池。
+            all = pool->read_chunk(0, total_count);
+            pool->clear();
+            sort_by_address(all);
+            if (all.size() > POOL_MEMORY_THRESHOLD) {
+                new_store = std::make_shared<scan_result_store>();
+                new_store->build(all);
+            }
         }
+    } catch (const std::bad_alloc&) {
+        if (error) *error = "结果集过大，内存不足入库失败（试试缩小扫描范围或换更精确的条件）";
+        return false;
+    } catch (const std::exception& e) {
+        if (error) *error = std::string("结果入库失败: ") + e.what();
+        return false;
+    } catch (...) {
+        if (error) *error = "结果入库失败（未知异常）";
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_result_store = std::move(new_store);   // 可能为空（小结果集走向量）
+    if (m_result_store) {
+        m_result_data.clear();
+        m_result_data.shrink_to_fit();
+    } else {
+        m_result_data = std::move(all);
     }
     m_generation.fetch_add(1, std::memory_order_release);
+    return true;
 }
 
 size_t scan_result_repository::get_result_count() const
