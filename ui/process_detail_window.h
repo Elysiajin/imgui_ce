@@ -36,6 +36,7 @@ private:
     int                     sym_module_ = -1;     // 行缓存属于哪个模块（-1 = 无）
     uint32_t                sym_pid_    = 0;      // 行缓存属于哪个进程
     std::vector<sym_row>    sym_rows_;
+    std::vector<int>        sym_filtered_;        // 过滤后的行索引（过滤串非空时每帧重建）
     char                    sym_filter_[64] = {}; // 符号名过滤（大小写不敏感）
 };
 

@@ -86,17 +86,29 @@ void result_panel::render() {
             ImGui::TableSetupColumn("前值");
             ImGui::TableHeadersRow();
 
+            // 行高显式告知 clipper（行都是单行 Selectable）＝Selectable 高
+            // （FontSize + 2*FramePadding.y）+ 单元格上下 CellPadding。
+            // 后台扫描线程会在 UI 渲染中途换掉整个结果池（scan_service 工作线程
+            // 执行 replace_all_results_from_pool），read_pool_chunk 按新池 clamp
+            // 后返回的批次可能比请求区间短甚至为空：
+            //   - 按请求区间索引 batch 会越界（崩溃）；
+            //   - 空批次使 clipper 行高推断失败（触发 imgui.cpp 断言）。
+            // 显式行高跳过推断，循环按 batch 实际大小绘制，两者都杜绝。
+            const ImGuiStyle& rst = ImGui::GetStyle();
+            const float row_h = ImGui::GetTextLineHeight() + rst.FramePadding.y * 2.0f
+                              + rst.CellPadding.y * 2.0f;
             ImGuiListClipper clipper;
-            clipper.Begin(row_total);
+            clipper.Begin(row_total, row_h);
             while (clipper.Step()) {
-                // Read the whole visible batch once (fewer allocations than per-row).
+                const int first = clipper.DisplayStart;
                 std::vector<scan_result> batch = repo->read_pool_chunk(
-                    (size_t)clipper.DisplayStart,
+                    (size_t)first,
                     (size_t)(clipper.DisplayEnd - clipper.DisplayStart));
-                if (batch.empty()) continue;
+                const int batch_n = (int)batch.size();
 
-                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
-                    const scan_result& r = batch[(size_t)(row - clipper.DisplayStart)];
+                for (int bi = 0; bi < batch_n; ++bi) {
+                    const int row = first + bi;
+                    const scan_result& r = batch[(size_t)bi];
 
                     ImGui::PushID(row);
                     ImGui::TableNextRow();

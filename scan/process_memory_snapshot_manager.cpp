@@ -231,6 +231,7 @@ process_memory_snapshot_manager::create_sparse_snapshot(
 void process_memory_snapshot_manager::clear() {
     // 快照文件带 DELETE_ON_CLOSE，最后一个 shared_ptr 释放时句柄关闭即自动删除，
     // 这里不再手动 remove（手动删对"仍打开"的文件也只会失败）。
+    std::lock_guard<std::mutex> lock(m_snap_mtx);
     m_first.reset();
     m_prev.reset();
 }

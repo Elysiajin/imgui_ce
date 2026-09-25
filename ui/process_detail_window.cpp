@@ -106,30 +106,43 @@ void process_detail_window::render_modules_tab() {
                     ImGui::TableSetupColumn("符号", ImGuiTableColumnFlags_WidthStretch);
                     ImGui::TableHeadersRow();
 
-                    // 过滤：小写包含匹配（空过滤串 = 全量）
+                    // 过滤：小写包含匹配（空过滤串 = 全量）。
+                    // 注意：ListClipper 的行数必须与实际绘制的行数一致 ——
+                    // 若在 Step() 的显示区间内 continue 跳过不匹配的行，首个
+                    // 区间可能一行都不画，clipper 第二次 Step() 推断行高时
+                    // 游标未移动，触发 imgui.cpp "table->RowPosY1 ==
+                    // clipper->StartPosY" 断言（输入过滤串即崩）。因此先构建
+                    // 过滤后的索引，再交给 clipper 裁剪。
                     char filter[64];
                     snprintf(filter, sizeof filter, "%s", sym_filter_);
                     for (char& c : filter) c = (char)std::tolower((unsigned char)c);
                     const bool has_filter = filter[0] != 0;
 
-                    ImGuiListClipper clip;
-                    clip.Begin((int)sym_rows_.size());
-                    while (clip.Step()) {
-                        for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
-                            const sym_row& r = sym_rows_[i];
-                            if (has_filter) {
-                                const char* n = r.name;
-                                bool hit = false;
-                                for (const char* p = n; *p; ++p) {
-                                    size_t k = 0;
-                                    while (filter[k] &&
-                                           std::tolower((unsigned char)p[k]) == (unsigned char)filter[k])
-                                        ++k;
-                                    if (!filter[k]) { hit = true; break; }
-                                }
-                                if (!hit) continue;
-                            }
+                    auto contains_ci = [](const char* name, const char* f) {
+                        for (const char* p = name; *p; ++p) {
+                            size_t k = 0;
+                            while (f[k] &&
+                                   std::tolower((unsigned char)p[k]) == (unsigned char)f[k])
+                                ++k;
+                            if (!f[k]) return true;
+                        }
+                        return false;
+                    };
+                    if (has_filter) {
+                        sym_filtered_.clear();
+                        for (int i = 0; i < (int)sym_rows_.size(); ++i)
+                            if (contains_ci(sym_rows_[i].name, filter))
+                                sym_filtered_.push_back(i);
+                    }
+                    const int row_count = has_filter ? (int)sym_filtered_.size()
+                                                     : (int)sym_rows_.size();
 
+                    ImGuiListClipper clip;
+                    clip.Begin(row_count);
+                    while (clip.Step()) {
+                        for (int ri = clip.DisplayStart; ri < clip.DisplayEnd; ++ri) {
+                            const int      i = has_filter ? sym_filtered_[ri] : ri;
+                            const sym_row& r = sym_rows_[i];
                             ImGui::TableNextRow();
                             ImGui::TableSetColumnIndex(0);
                             ImGui::Text("%llX", (unsigned long long)r.address);
