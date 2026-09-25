@@ -222,12 +222,13 @@ void menu_shell::render_content()
     const ImVec2      ws  = ImGui::GetWindowSize();
 
     // 内容区几何：x 从侧边栏右缘 + 间距起，y 从 Logo 分割线下起；
-    // 底部预留状态条高度（与经典布局同款辉光条）
+    // 底部预留状态条高度（与经典布局同款辉光条），仅留 8px 收边让
+    // 状态条贴住面板底缘（过大留白会显得没铺满）。
     const float status_h = ImGui::GetTextLineHeight() + st.FramePadding.y * 2.0f + 6.0f;
     const float x  = k_sidebar_w + k_content_gap - pad.x;
     const float y0 = k_header_h + 14.0f - pad.y;
     const float w  = ws.x - x - k_content_gap;
-    const float h  = ws.y - y0 - status_h - st.ItemSpacing.y - 12.0f;
+    const float h  = ws.y - y0 - status_h - st.ItemSpacing.y - 8.0f;
     if (w <= 0.0f || h <= 0.0f)
         return;
 

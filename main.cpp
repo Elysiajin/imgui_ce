@@ -198,14 +198,23 @@ int main()
             }
 
             if (!menu_mode) {
-                const float bottom_h = 200.0f;
                 // 常进度条
                 render_scan_status_bar();
-                float top_h = ImGui::GetContentRegionAvail().y - bottom_h - ImGui::GetStyle().ItemSpacing.y;
-                if (top_h < ImGui::GetFrameHeight()) top_h = ImGui::GetFrameHeight();
 
-                // 使用静态变量记录上方区域的高度（初始给一个值，或者根据窗口大小自适应）
-                static float above_height = 400.0f;
+                // 上方区域高度：首次按窗口高度比例（上 55%）分配；窗口缩放
+                // （最大化/还原）时等比跟随，保持用户拖出的上下比例；拖拽
+                // splitter 只改像素值，不会重置比例。
+                static float above_height = 0.0f;
+                static float last_avail_total = 0.0f;
+                const float avail_total = ImGui::GetContentRegionAvail().y; // 上+分隔+下 总高
+                if (above_height <= 0.0f)
+                    above_height = avail_total * 0.55f;
+                else if (last_avail_total > 1.0f && fabsf(avail_total - last_avail_total) > 1.0f)
+                    above_height *= avail_total / last_avail_total;
+                last_avail_total = avail_total;
+                if (above_height < 40.0f) above_height = 40.0f;
+                const float max_above = avail_total - 10.0f - 8.0f; // 下方地址列表至少保留 10px
+                if (above_height > max_above) above_height = max_above;
 
                 // 1. 绘制上方区域
                 ImGui::BeginChild("##Above Panel", ImVec2(0, above_height), ImGuiChildFlags_Borders);
@@ -224,7 +233,7 @@ int main()
                 }
                 ImGui::EndChild();
 
-                ImGui::InvisibleButton("##splitter", ImVec2(-1.0f, 4.0f)); // 宽度占满，高度8像素
+                ImGui::InvisibleButton("##splitter", ImVec2(-1.0f, 4.0f)); // 宽度占满，高度4像素
                 if (ImGui::IsItemActive()) {
                     // 鼠标拖拽时，实时修改上方高度
                     above_height += ImGui::GetIO().MouseDelta.y;
@@ -232,15 +241,6 @@ int main()
                 if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
                     // 鼠标悬停或拖拽时，改变鼠标指针为上下箭头
                     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-                }
-
-                float min_height = 40.0f;
-                float bottom_min_height = 10.0f; // 下方地址列表至少要保留的高度
-                float avail_h = ImGui::GetContentRegionAvail().y; // 当前主窗口剩余高度
-
-                if (above_height < min_height) above_height = min_height;
-                if (above_height > avail_h - bottom_min_height - 8.0f) {
-                    above_height = avail_h - bottom_min_height - 8.0f;
                 }
 
                 ImGui::BeginChild("##Below Panel", ImVec2(0, 0), ImGuiChildFlags_Borders);
