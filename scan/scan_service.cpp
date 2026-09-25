@@ -34,11 +34,20 @@ void scan_service::start_scan(const scan_request& request)
     if (m_worker.joinable())
         m_worker.join();   // 等待上一轮任务完全退出
 
-    // UI 线程准备段：只做轻量操作（换出上一轮结果为 O(1) move 或 <=阈值的小
-    // vector 打包）。失败也不能让异常逃出 UI 线程的调用栈。
+    // UI 线程准备段。顺序至关重要：
+    //   1) 先取出上一轮结果作为再次扫描的输入（get_results）
+    //   2) 再 save_as_previous_results 把结果移出仓库（供"撤销扫描"）
+    // 若反过来（先移出再取），再次扫描拿到的是空结果集，所有需要与上轮
+    // 比较的条件（变化/未变化/增加/减少…）全部得 0。
+    // 解码在 UI 线程完成；大结果集的 decode_all 是紧凑遍历，秒级内可接受，
+    // 换来的正确性优先。异常不允许逃出 UI 线程的调用栈。
+    std::vector<scan_result> current_results;
     try {
         m_expect_empty_results = (request.mode == scan_mode::first &&
                                 request.first_type == scan_type::unknown_initial);
+
+        if (request.mode == scan_mode::next)
+            current_results = m_repository->get_results();   // 必须在 save_as_previous 之前
 
         if (m_repository && m_repository->get_result_count() > 0) {
             m_repository->save_as_previous_results();
@@ -47,6 +56,10 @@ void scan_service::start_scan(const scan_request& request)
         if (request.mode == scan_mode::first && request.first_type == scan_type::unknown_initial) {
             m_expect_empty_results = true;
         }
+    } catch (const std::bad_alloc&) {
+        m_scanning.store(false, std::memory_order_release);
+        application_context::instance().scan_failed.emit("扫描启动失败：内存不足（上一轮结果过大）");
+        return;
     } catch (const std::exception& e) {
         m_scanning.store(false, std::memory_order_release);
         application_context::instance().scan_failed.emit(
@@ -56,17 +69,11 @@ void scan_service::start_scan(const scan_request& request)
 
     m_scanning.store(true, std::memory_order_release);
     application_context::instance().scan_started.emit();
-    m_worker = std::thread([this, request]() {
+    m_worker = std::thread([this, request, current_results = std::move(current_results)]() {
         // 任何异常都不允许逃出线程（会 std::terminate 崩掉整个进程）：
         // 大结果集的 解码/排序/入库 都可能 bad_alloc，一律转成错误上报 UI。
         std::string error;
         try {
-            // prev_results 在工作线程内再取：大结果集解码成 vector 可能秒级
-            // 耗时，放在 UI 线程会把界面冻住。
-            std::vector<scan_result> current_results;
-            if (request.mode == scan_mode::next)
-                current_results = m_repository->get_results();
-
             scan_engine::scan_report pack = m_engine->execute(request, current_results);
             // 用户点了撤销：跳过入库，尽快结束线程让 cancel() 的 join() 返回。
             if (!m_engine->is_cancelled() && pack.results && pack.results->total_size() > 0) {
